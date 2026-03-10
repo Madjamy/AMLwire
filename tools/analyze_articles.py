@@ -54,9 +54,15 @@ COUNTRY/REGION RULE
 TAGS RULE
 Generate 3-6 short lowercase tags relevant to the article (e.g. ["sanctions", "shell-company", "crypto", "fatf", "australia"])
 
+DATE VERIFICATION RULE (CRITICAL)
+- Read the article title and description carefully for any date signals (e.g. "March 2026", "last week", "this year", "2025", "2024")
+- If the content clearly indicates the article is from more than 7 days before today's date, EXCLUDE it entirely — do not include it in the output
+- If the provided Published date looks like a placeholder (e.g. today's date on clearly old content), use the date from the article text instead
+- Only include articles that appear to be genuinely recent (within the last 7 days of today's date)
+- For published_date in output: use the date found in the article content if it differs from the provided date; format as DD-MM-YYYY
+
 QUALITY RULES
 - Do not invent missing facts
-- Do not guess publication dates — use what is provided
 - Do not guess typologies beyond what the title/description supports
 
 OUTPUT FORMAT
@@ -75,13 +81,14 @@ Each element must have exactly these fields:
   "tags": ["tag1", "tag2", "tag3"]
 }
 
-If an article is not relevant to AML/financial crime topics, exclude it entirely.
-Return at most 15 items. Prefer the most recent and information-rich articles.
+If an article is clearly not relevant to AML/financial crime topics, exclude it.
+All articles provided have already passed a keyword relevance filter, so most should be included.
+Return ALL relevant articles — do not cap or trim the list.
 """
 
 
 def _build_user_prompt(articles: list[dict], current_date: str) -> str:
-    lines = [f"Today's date: {current_date}\n\nAnalyze the following articles and return a JSON array:\n"]
+    lines = [f"Today's date: {current_date}. Only include articles published within the last 7 days (on or after the date 7 days ago). Exclude any article whose content signals it is older than that.\n\nAnalyze the following articles and return a JSON array:\n"]
     for i, a in enumerate(articles, 1):
         lines.append(f"--- Article {i} ---")
         lines.append(f"Title: {a.get('title', '')}")
@@ -109,7 +116,7 @@ def _call_ai(client, articles: list[dict], current_date: str) -> list[dict]:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.1,
-            max_tokens=8000,
+            max_tokens=32000,
         )
         raw = response.choices[0].message.content.strip()
 
