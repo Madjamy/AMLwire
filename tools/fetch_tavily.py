@@ -5,6 +5,7 @@ Covers topics that NewsAPI misses: human trafficking, hawala, TBML, drug traffic
 """
 
 import os
+import re
 import requests
 from datetime import datetime, timezone
 from dotenv import load_dotenv
@@ -131,6 +132,72 @@ def _is_relevant(text: str) -> bool:
     return any(kw in text for kw in TOPIC_KEYWORDS)
 
 
+def _extract_date(url: str, content: str) -> str:
+    """
+    Extract a publish date for Tavily articles (which don't return published_date).
+    Priority: URL path date → date in content text → today's date.
+    Tavily's days=7 param already guarantees recency, so today is a safe fallback.
+    Returns ISO date string YYYY-MM-DD.
+    """
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    # 1. Try URL path for embedded dates
+    url_patterns = [
+        # /2026/03/10 or /2026-03-10 (year/month/day)
+        (r"/(20\d\d)[/-](\d{2})[/-](\d{2})", "ymd"),
+        # /20260310- (compact)
+        (r"/(20\d\d)(\d{2})(\d{2})[/-]", "ymd"),
+        # /2026/03/ or /2026/02/ (year/month only — default day to 01)
+        (r"/(20\d\d)[/-](\d{2})/", "ym"),
+    ]
+    for pat, fmt in url_patterns:
+        m = re.search(pat, url)
+        if m:
+            try:
+                if fmt == "ymd":
+                    y, mo, d = m.group(1), m.group(2), m.group(3)
+                else:
+                    y, mo, d = m.group(1), m.group(2), "01"
+                dt = datetime.strptime(f"{y}-{mo}-{d}", "%Y-%m-%d")
+                if datetime(2020, 1, 1) <= dt <= datetime.now():
+                    return dt.strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+
+    # 2. Try content text for month-name dates
+    # Matches: "March 10, 2026" / "10 March 2026" / "Mar 10 2026" / "March 10th, 2026"
+    month_map = {
+        "jan": "01", "feb": "02", "mar": "03", "apr": "04",
+        "may": "05", "jun": "06", "jul": "07", "aug": "08",
+        "sep": "09", "oct": "10", "nov": "11", "dec": "12",
+    }
+    content_patterns = [
+        # "March 10, 2026" or "March 10th, 2026"
+        r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(20\d\d)\b",
+        # "10 March 2026"
+        r"\b(\d{1,2})(?:st|nd|rd|th)?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(20\d\d)\b",
+        # ISO in text: "2026-03-10"
+        r"\b(20\d\d)-(\d{2})-(\d{2})\b",
+    ]
+    for i, pat in enumerate(content_patterns):
+        m = re.search(pat, content[:2000], re.IGNORECASE)
+        if m:
+            try:
+                if i == 0:   # Month DD, YYYY
+                    mo = month_map[m.group(1)[:3].lower()]
+                    return f"{m.group(3)}-{mo}-{int(m.group(2)):02d}"
+                elif i == 1:  # DD Month YYYY
+                    mo = month_map[m.group(2)[:3].lower()]
+                    return f"{m.group(3)}-{mo}-{int(m.group(1)):02d}"
+                elif i == 2:  # ISO
+                    return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+            except (KeyError, ValueError):
+                pass
+
+    # 3. Fall back to today (safe: Tavily days=7 guarantees recency)
+    return today
+
+
 def _search(query: str, days: int = 7, country_tag: str = "") -> list[dict]:
     """Execute a single Tavily search and return standardised article dicts."""
     if not TAVILY_API_KEY:
@@ -154,7 +221,6 @@ def _search(query: str, days: int = 7, country_tag: str = "") -> list[dict]:
             url = item.get("url", "")
             title = item.get("title", "")
             content = item.get("content", "")
-            published = item.get("published_date", "")
 
             if not url or not title:
                 continue
@@ -163,12 +229,15 @@ def _search(query: str, days: int = 7, country_tag: str = "") -> list[dict]:
             if not _is_relevant(text):
                 continue
 
+            # Tavily doesn't return published_date — extract from URL/content or use today
+            published = _extract_date(url, content)
+
             results.append({
                 "title": title,
                 "url": url,
                 "source": item.get("source", ""),
                 "published_at": published,
-                "description": content[:500] if content else "",  # use as description
+                "description": content[:500] if content else "",
                 "content": content,
                 "api_source": "tavily",
                 **({"country": country_tag} if country_tag else {}),
