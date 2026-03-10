@@ -83,6 +83,41 @@ TAVILY_QUERIES = [
     "financial intelligence unit AML action",
 ]
 
+# ─── FIU / FATF / FSRB authority queries ────────────────────────────────────
+# Targets publications, typology reports, announcements and enforcement news
+# from major global financial intelligence and standard-setting bodies.
+AUTHORITY_QUERIES = [
+    # FATF
+    "FATF report publication typology mutual evaluation 2026",
+    "FATF grey list black list country AML deficiency",
+    "FATF guidance paper financial crime recommendation",
+
+    # FSRBs (FATF-Style Regional Bodies)
+    "MONEYVAL mutual evaluation AML report 2026",          # Europe
+    "APG Asia Pacific Group AML typology report 2026",     # Asia-Pacific
+    "ESAAMLG eastern southern Africa AML report",          # East/Southern Africa
+    "GABAC central Africa AML financial crime",            # Central Africa
+    "GAFILAT Latin America AML report typology",           # Latin America
+    "GIABA west Africa AML financial crime 2026",          # West Africa
+    "MENAFATF Middle East North Africa AML report",        # MENA
+    "EAG Eurasian AML financial crime report",             # Eurasia
+    "CFATF Caribbean AML typology report",                 # Caribbean
+
+    # Major FIUs
+    "AUSTRAC Australia AML enforcement action report 2026",
+    "FinCEN United States financial intelligence advisory alert 2026",
+    "UKFIU NCA financial intelligence AML action 2026",
+    "FINTRAC Canada AML enforcement penalty report 2026",
+    "TRACFIN France financial intelligence AML report",
+    "FIU-IND India financial intelligence AML action",
+    "STR suspicious transaction report FIU enforcement",
+    "financial intelligence unit advisory typology alert 2026",
+
+    # Egmont Group
+    "Egmont Group financial intelligence unit cooperation 2026",
+    "FIU international cooperation money laundering",
+]
+
 # Country-specific queries for priority jurisdictions
 COUNTRY_QUERIES = {
     "Australia": [
@@ -271,6 +306,15 @@ def fetch_articles() -> list[dict]:
                 results.append(article)
 
     print(f"[Tavily] Global fetch: {len(results)} articles")
+
+    # FIU / FATF / FSRB authority queries (top 3 per query, deduplicated)
+    authority_start = len(results)
+    for query in AUTHORITY_QUERIES:
+        for article in _search(query, days=7):
+            if article["url"] not in seen_urls:
+                seen_urls.add(article["url"])
+                results.append(article)
+    print(f"[Tavily] Authority fetch (FIU/FATF/FSRB): {len(results) - authority_start} articles")
 
     # Country-specific queries (top 5 per country)
     country_total = 0
