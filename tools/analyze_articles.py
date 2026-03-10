@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "anthropic/claude-3.5-sonnet")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "google/gemini-2.5-flash-lite")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 SYSTEM_PROMPT = """You are a financial crime intelligence analyst specializing in:
@@ -69,7 +69,7 @@ Each element must have exactly these fields:
   "region": "...",
   "source_name": "...",
   "source_url": "...",
-  "summary": "1-2 sentence summary of what happened and the AML angle",
+  "summary": "3-4 sentence factual summary. Must include: (1) what specifically happened and when, (2) the exact entity, institution, or person involved and their country/city, (3) the financial amount or scale if mentioned, (4) the AML/financial crime angle — the method used, the enforcement outcome, or why it is significant.",
   "aml_typology": "...",
   "category": "news" or "typology",
   "tags": ["tag1", "tag2", "tag3"]
@@ -109,7 +109,7 @@ def _call_ai(client, articles: list[dict], current_date: str) -> list[dict]:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.1,
-            max_tokens=4000,
+            max_tokens=8000,
         )
         raw = response.choices[0].message.content.strip()
 
