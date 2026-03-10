@@ -57,17 +57,43 @@ AML_QUERIES = [
 ]
 
 TOPIC_KEYWORDS = [
-    "money laundering", "aml", "anti-money laundering", "sanctions", "tax evasion",
-    "tax fraud", "financial crime", "typology", "suspicious transaction", "fatf",
-    "shell company", "beneficial ownership", "smurfing", "structuring", "layering",
-    "trade-based money laundering", "tbml", "crypto mixing", "mule account",
-    "terror finance", "terrorist financing", "human trafficking", "smuggling",
-    "drug trafficking", "narco", "organized crime", "cybercrime", "cyber fraud",
-    "enforcement action", "compliance failure", "suspicious activity report",
-    "darknet", "sanctions evasion", "hawala", "informal value transfer",
-    "real estate laundering", "professional enabler", "beneficial owner",
-    "pep", "politically exposed", "bribery", "corruption", "proceeds of crime",
-    "asset seizure", "confiscation", "deferred prosecution", "conviction",
+    # Core AML
+    "money laundering", "anti money laundering", "aml", "financial crime", "illicit finance",
+    # Suspicious reporting
+    "suspicious transaction report", "suspicious activity report", "sar",
+    # FATF / regulators
+    "fatf", "mutual evaluation", "grey list",
+    # Typologies
+    "smurfing", "structuring", "layering", "trade based money laundering", "tbml",
+    # Shell companies
+    "shell company", "beneficial ownership", "beneficial owner", "nominee director",
+    # Crypto laundering
+    "crypto laundering", "crypto mixer", "tornado cash", "blockchain laundering",
+    # Sanctions
+    "sanctions evasion", "sanctions violation", "ofac", "sdn list",
+    # Terror finance
+    "terrorist financing", "terror finance", "terror funding",
+    # Organized crime
+    "organized crime", "criminal syndicate", "cartel",
+    # Drug trafficking
+    "drug trafficking", "narco trafficking",
+    # Human trafficking
+    "human trafficking", "modern slavery finance",
+    # Cybercrime
+    "cybercrime", "ransomware", "darknet", "dark web",
+    # Professional enablers
+    "professional enabler", "trust service provider",
+    # Real estate
+    "property laundering", "real estate laundering",
+    # Corruption
+    "politically exposed person", "pep", "bribery", "corruption",
+    # Enforcement
+    "financial penalty", "compliance failure", "regulatory fine",
+    "deferred prosecution", "conviction", "settlement",
+    # Asset recovery
+    "asset seizure", "asset forfeiture", "confiscation", "proceeds of crime",
+    # Additional
+    "hawala", "tax evasion", "tax fraud", "sanctions",
 ]
 
 
