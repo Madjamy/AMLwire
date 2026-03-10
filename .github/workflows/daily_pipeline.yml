@@ -1,0 +1,44 @@
+name: AMLWire Daily Pipeline
+
+on:
+  schedule:
+    # 20:00 UTC = 06:00 AEST (UTC+10)
+    # During AEDT (daylight saving, Oct-Apr): 20:00 UTC = 07:00 AEDT — adjust to 19:00 UTC if needed
+    - cron: "0 20 * * *"
+  workflow_dispatch:  # Allow manual runs from GitHub UI
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests supabase python-dotenv "openai>=1.12.0" httpx
+
+      - name: Run AMLWire pipeline
+        env:
+          NEWSAPI_KEY_1: ${{ secrets.NEWSAPI_KEY_1 }}
+          NEWSAPI_KEY_2: ${{ secrets.NEWSAPI_KEY_2 }}
+          SERPAPI_KEY_1: ${{ secrets.SERPAPI_KEY_1 }}
+          SERPAPI_KEY_2: ${{ secrets.SERPAPI_KEY_2 }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_MODEL: ${{ secrets.OPENROUTER_MODEL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python main.py
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-logs
+          path: logs/
