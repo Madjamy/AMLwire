@@ -19,30 +19,29 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "x-ai/grok-4.1-fast")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-SKIP_TYPOLOGIES = {"General AML news", "AML compliance failure"}  # Too generic to synthesize meaningfully
+SKIP_TYPOLOGIES = {"AML News", "AML compliance failure"}  # Too generic to synthesize meaningfully
 
 # Canonical typology names — must match analyze_articles.py exactly
 STANDARD_TYPOLOGIES = {
-    "Layering and placement",
-    "Structuring / smurfing",
-    "Trade-based money laundering",
-    "Shell companies and beneficial ownership concealment",
-    "Crypto mixing and tumbling",
-    "Cryptocurrency-based laundering",
-    "Sanctions evasion",
-    "Mule accounts",
-    "Hawala and informal value transfer",
-    "Professional enablers",
-    "Darknet-enabled laundering",
-    "Cash-intensive business laundering",
+    "Structuring / Smurfing",
+    "Trade-based money laundering (TBML)",
+    "Shell companies and nominee ownership",
     "Real estate laundering",
+    "Cash-intensive business laundering",
     "Offshore concealment",
-    "Terror financing",
-    "Cyber-enabled fraud laundering",
-    "Drug trafficking proceeds laundering",
-    "Human trafficking proceeds laundering",
+    "Crypto-asset laundering",
+    "Crypto mixing / tumbling",
+    "Darknet-enabled laundering",
+    "Money mules",
+    "Hawala and informal value transfer",
+    "Sanctions",
+    "Professional enablers",
+    "Terrorist financing",
+    "Drug trafficking proceeds",
+    "Human trafficking proceeds",
+    "Cybercrime proceeds",
     "AML compliance failure",
-    "General AML news",
+    "AML News",
 }
 
 SYSTEM_PROMPT = """You are a senior AML typology analyst writing concise briefings for financial crime compliance professionals.

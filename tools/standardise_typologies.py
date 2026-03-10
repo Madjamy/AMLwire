@@ -18,74 +18,67 @@ SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 
 # ─── Canonical vocabulary (must stay in sync with analyze_articles.py) ──────
 CANONICAL = {
-    "Layering and placement",
-    "Structuring / smurfing",
-    "Trade-based money laundering",
-    "Shell companies and beneficial ownership concealment",
-    "Crypto mixing and tumbling",
-    "Cryptocurrency-based laundering",
-    "Sanctions evasion",
-    "Mule accounts",
-    "Hawala and informal value transfer",
-    "Professional enablers",
-    "Darknet-enabled laundering",
-    "Cash-intensive business laundering",
+    "Structuring / Smurfing",
+    "Trade-based money laundering (TBML)",
+    "Shell companies and nominee ownership",
     "Real estate laundering",
+    "Cash-intensive business laundering",
     "Offshore concealment",
-    "Terror financing",
-    "Cyber-enabled fraud laundering",
-    "Drug trafficking proceeds laundering",
-    "Human trafficking proceeds laundering",
+    "Crypto-asset laundering",
+    "Crypto mixing / tumbling",
+    "Darknet-enabled laundering",
+    "Money mules",
+    "Hawala and informal value transfer",
+    "Sanctions",
+    "Professional enablers",
+    "Terrorist financing",
+    "Drug trafficking proceeds",
+    "Human trafficking proceeds",
+    "Cybercrime proceeds",
     "AML compliance failure",
-    "General AML news",
+    "AML News",
 }
 
-# ─── Manual mapping: old value → canonical label ────────────────────────────
+# ─── Manual mapping: old value → new canonical label ────────────────────────
 MAPPING = {
-    # Crypto mixing variants
-    "Crypto mixing / tumblers":                     "Crypto mixing and tumbling",
-    "Crypto mixing/tumblers":                       "Crypto mixing and tumbling",
-    "Crypto mixing / sanctions evasion networks":   "Crypto mixing and tumbling",
-    "Crypto mixing / sanctions evasion":            "Crypto mixing and tumbling",
-    "Crypto mixing and darknet-enabled laundering": "Darknet-enabled laundering",
-    "Crypto mixing, darknet-enabled laundering":    "Darknet-enabled laundering",
+    # Previous canonical → new canonical
+    "Layering and placement":                               "AML News",
+    "Structuring / smurfing":                               "Structuring / Smurfing",
+    "Trade-based money laundering":                         "Trade-based money laundering (TBML)",
+    "Shell companies and beneficial ownership concealment": "Shell companies and nominee ownership",
+    "Crypto mixing and tumbling":                           "Crypto mixing / tumbling",
+    "Cryptocurrency-based laundering":                      "Crypto-asset laundering",
+    "Sanctions evasion":                                    "Sanctions",
+    "Mule accounts":                                        "Money mules",
+    "Terror financing":                                     "Terrorist financing",
+    "Cyber-enabled fraud laundering":                       "Cybercrime proceeds",
+    "Drug trafficking proceeds laundering":                 "Drug trafficking proceeds",
+    "Human trafficking proceeds laundering":                "Human trafficking proceeds",
+    "General AML news":                                     "AML News",
 
-    # Sanctions evasion variants
-    "Sanctions evasion through crypto exchanges":   "Sanctions evasion",
-    "Sanctions evasion networks":                   "Sanctions evasion",
-    "Crypto-based sanctions evasion":               "Sanctions evasion",
-    "Crypto exchange sanctions compliance failures":"Sanctions evasion",
-    "Sanctions case":                               "Sanctions evasion",
-
-    # Hawala variants
-    "Hawala / informal value transfer":             "Hawala and informal value transfer",
-    "Hawala and informal value transfer systems":   "Hawala and informal value transfer",
-
-    # Shell companies / multi-typology
-    "Shell companies | Beneficial ownership concealment":
-        "Shell companies and beneficial ownership concealment",
+    # Legacy free-text variants
+    "Crypto mixing / tumblers":                             "Crypto mixing / tumbling",
+    "Crypto mixing/tumblers":                               "Crypto mixing / tumbling",
+    "Crypto mixing / sanctions evasion networks":           "Crypto mixing / tumbling",
+    "Crypto mixing / sanctions evasion":                    "Crypto mixing / tumbling",
+    "Crypto mixing and darknet-enabled laundering":         "Darknet-enabled laundering",
+    "Crypto mixing, darknet-enabled laundering":            "Darknet-enabled laundering",
+    "Sanctions evasion through crypto exchanges":           "Sanctions",
+    "Sanctions evasion networks":                           "Sanctions",
+    "Crypto-based sanctions evasion":                       "Sanctions",
+    "Crypto exchange sanctions compliance failures":        "Sanctions",
+    "Sanctions case":                                       "Sanctions",
+    "Hawala / informal value transfer":                     "Hawala and informal value transfer",
+    "Hawala and informal value transfer systems":           "Hawala and informal value transfer",
+    "Shell companies | Beneficial ownership concealment":   "Shell companies and nominee ownership",
     "Layering | Shell companies | Cash-intensive business laundering":
-        "Shell companies and beneficial ownership concealment",
+                                                            "Shell companies and nominee ownership",
     "Trade-based money laundering | Money mules | Real estate laundering":
-        "Trade-based money laundering",
-
-    # Human trafficking
-    "Human trafficking financial flows":            "Human trafficking proceeds laundering",
-
-    # Mule accounts
-    "Corporate money mule accounts":                "Mule accounts",
-
-    # Organised crime (generic → General AML news)
-    "Organized crime money laundering":             "General AML news",
-
-    # AML compliance
-    "AML compliance failures":                      "AML compliance failure",
-
-    # Already canonical but check anyway
-    "Cryptocurrency-based laundering":              "Cryptocurrency-based laundering",
-    "Trade-based money laundering":                 "Trade-based money laundering",
-    "Professional enablers":                        "Professional enablers",
-    "General AML news":                             "General AML news",
+                                                            "Trade-based money laundering (TBML)",
+    "Human trafficking financial flows":                    "Human trafficking proceeds",
+    "Corporate money mule accounts":                        "Money mules",
+    "Organized crime money laundering":                     "AML News",
+    "AML compliance failures":                              "AML compliance failure",
 }
 
 
@@ -122,7 +115,7 @@ def main():
     for aid, title, old, new in updates:
         print(f"  '{old}'")
         print(f"  -> '{new}'")
-        print(f"     {title}")
+        print(f"     {title.encode('ascii', errors='replace').decode('ascii')}")
         print()
 
     print(f"Applying {len(updates)} updates...")
