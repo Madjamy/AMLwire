@@ -120,6 +120,73 @@ def _build_user_prompt(articles: list[dict], current_date: str) -> str:
 
 BATCH_SIZE = 50  # articles per AI call
 
+# Canonical typology vocabulary — AI must pick from this list
+CANONICAL_TYPOLOGIES = {
+    "Layering and placement",
+    "Structuring / smurfing",
+    "Trade-based money laundering",
+    "Shell companies and beneficial ownership concealment",
+    "Crypto mixing and tumbling",
+    "Cryptocurrency-based laundering",
+    "Sanctions evasion",
+    "Mule accounts",
+    "Hawala and informal value transfer",
+    "Professional enablers",
+    "Darknet-enabled laundering",
+    "Cash-intensive business laundering",
+    "Real estate laundering",
+    "Offshore concealment",
+    "Terror financing",
+    "Cyber-enabled fraud laundering",
+    "Drug trafficking proceeds laundering",
+    "Human trafficking proceeds laundering",
+    "AML compliance failure",
+    "General AML news",
+}
+
+
+def _normalise_typology(typology: str) -> str:
+    """
+    Snap an AI-returned typology to the closest canonical label.
+    If it's already canonical, return as-is.
+    Otherwise log a warning and fall back to 'General AML news'.
+    """
+    if typology in CANONICAL_TYPOLOGIES:
+        return typology
+    # Case-insensitive exact match
+    lower = typology.lower()
+    for canon in CANONICAL_TYPOLOGIES:
+        if canon.lower() == lower:
+            return canon
+    # Keyword-based fuzzy match
+    keyword_map = [
+        (["layering", "placement"],                         "Layering and placement"),
+        (["structuring", "smurfing"],                       "Structuring / smurfing"),
+        (["trade-based", "tbml", "invoice fraud"],          "Trade-based money laundering"),
+        (["shell compan", "beneficial owner"],              "Shell companies and beneficial ownership concealment"),
+        (["mixing", "tumbl", "mixer"],                      "Crypto mixing and tumbling"),
+        (["crypto", "blockchain", "defi", "virtual asset"], "Cryptocurrency-based laundering"),
+        (["sanction"],                                      "Sanctions evasion"),
+        (["mule"],                                          "Mule accounts"),
+        (["hawala", "informal value"],                      "Hawala and informal value transfer"),
+        (["professional enabler", "accountant", "lawyer"],  "Professional enablers"),
+        (["darknet", "dark web"],                           "Darknet-enabled laundering"),
+        (["cash-intensive", "cash intensive"],              "Cash-intensive business laundering"),
+        (["real estate", "property"],                       "Real estate laundering"),
+        (["offshore"],                                      "Offshore concealment"),
+        (["terror"],                                        "Terror financing"),
+        (["cyber", "fraud laundering"],                     "Cyber-enabled fraud laundering"),
+        (["drug", "narco"],                                 "Drug trafficking proceeds laundering"),
+        (["human trafficking", "trafficking"],              "Human trafficking proceeds laundering"),
+        (["compliance fail", "aml fail", "control fail"],   "AML compliance failure"),
+    ]
+    for keywords, canon in keyword_map:
+        if any(kw in lower for kw in keywords):
+            print(f"[Analyze] Typology normalised: '{typology}' -> '{canon}'")
+            return canon
+    print(f"[Analyze] Unknown typology, defaulting to General AML news: '{typology}'")
+    return "General AML news"
+
 
 def _call_ai(client, articles: list[dict], current_date: str) -> list[dict]:
     """Send one batch of articles to OpenRouter. Returns structured list."""
@@ -147,6 +214,10 @@ def _call_ai(client, articles: list[dict], current_date: str) -> list[dict]:
         result = json.loads(raw)
         if not isinstance(result, list):
             result = [result]
+        # Snap any non-canonical typology to the closest standard label
+        for item in result:
+            if "aml_typology" in item:
+                item["aml_typology"] = _normalise_typology(item["aml_typology"])
         return result
 
     except json.JSONDecodeError as e:
