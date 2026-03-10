@@ -69,7 +69,7 @@ Each element must have exactly these fields:
   "region": "...",
   "source_name": "...",
   "source_url": "...",
-  "summary": "3-4 sentence factual summary. Must include: (1) what specifically happened and when, (2) the exact entity, institution, or person involved and their country/city, (3) the financial amount or scale if mentioned, (4) the AML/financial crime angle — the method used, the enforcement outcome, or why it is significant.",
+  "summary": "5-6 sentence factual summary. Must include: (1) what specifically happened and when, (2) the exact entity, institution, or person involved and their country/city, (3) the financial amount or scale if mentioned, (4) the AML/financial crime angle — the specific method used or typology involved, (5) the enforcement outcome, regulatory action, or legal consequence, (6) why it is significant for AML compliance or financial crime prevention.",
   "aml_typology": "...",
   "category": "news" or "typology",
   "tags": ["tag1", "tag2", "tag3"]

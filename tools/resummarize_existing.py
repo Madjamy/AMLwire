@@ -25,17 +25,19 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 SYSTEM_PROMPT = """You are a financial crime intelligence analyst. For each article provided, write a detailed factual summary.
 
 The summary MUST include ALL of the following where available:
-1. What specifically happened (the event, action, or finding)
+1. What specifically happened (the event, action, or finding) and when
 2. The exact entity, institution, person, or country involved — include names and locations
 3. The financial amount, scale, or timeframe if mentioned
-4. The AML/financial crime angle — what method was used, what law was violated, what enforcement action was taken, or why it matters
+4. The AML/financial crime angle — the specific method or typology used (e.g. shell companies, crypto mixing, smurfing, trade-based laundering)
+5. The enforcement outcome, regulatory action, or legal consequence (arrest, fine, conviction, designation, etc.)
+6. Why it is significant for AML compliance, financial crime prevention, or the broader regulatory landscape
 
 OUTPUT FORMAT
 Respond with ONLY a valid JSON array. No markdown, no explanation.
 Each element must have exactly these two fields:
 {
   "source_url": "...",
-  "summary": "3-4 sentence factual summary covering what happened, who was involved and where, the financial scale, and the AML/enforcement significance."
+  "summary": "5-6 sentence factual summary covering: what happened and when, who was involved and where, the financial scale, the specific AML typology or method, the enforcement outcome, and the broader significance."
 }
 
 Do not invent facts. If a detail is not in the title or description, omit it — do not guess.
@@ -64,7 +66,7 @@ def _call_ai_for_summaries(client, articles: list[dict]) -> list[dict]:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.1,
-            max_tokens=8000,
+            max_tokens=16000,
         )
         raw = response.choices[0].message.content.strip()
 
