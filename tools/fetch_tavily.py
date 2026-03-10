@@ -162,6 +162,20 @@ TOPIC_KEYWORDS = [
 ]
 
 
+# URL path segments that indicate a reference/resource page rather than a news article
+_RESOURCE_PATH_PATTERNS = re.compile(
+    r"/(?:topics|resources|guidance|about|faq|faqs|explainer|learn|knowledge"
+    r"|library|education|training|support|help|whitepaper|what-is|overview"
+    r"|definitions|glossary|careers|contact|index-|publications(?:/index)?)(?:/|$)",
+    re.IGNORECASE,
+)
+
+
+def _is_resource_url(url: str) -> bool:
+    """Return True if the URL looks like a reference/resource page, not a news article."""
+    return bool(_RESOURCE_PATH_PATTERNS.search(url))
+
+
 def _is_relevant(text: str) -> bool:
     text = text.lower()
     return any(kw in text for kw in TOPIC_KEYWORDS)
@@ -259,6 +273,10 @@ def _search(query: str, days: int = 7, country_tag: str = "") -> list[dict]:
             content = item.get("content", "")
 
             if not url or not title:
+                continue
+
+            # Skip resource/reference/topic pages (not news articles)
+            if _is_resource_url(url):
                 continue
 
             text = (title + " " + content).lower()
