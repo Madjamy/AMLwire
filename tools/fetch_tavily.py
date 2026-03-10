@@ -206,10 +206,11 @@ def _search(query: str, days: int = 7, country_tag: str = "") -> list[dict]:
         payload = {
             "api_key": TAVILY_API_KEY,
             "query": query,
+            "topic": "news",            # news only — filters out reference/educational pages
             "search_depth": "basic",
             "max_results": 8,
             "days": days,
-            "include_raw_content": False,  # `content` field is enough (good excerpt)
+            "include_raw_content": False,
             "include_answer": False,
         }
         resp = requests.post(TAVILY_URL, json=payload, timeout=20)

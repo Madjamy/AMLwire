@@ -110,9 +110,15 @@ Each element must have exactly these fields:
   "tags": ["tag1", "tag2", "tag3"]
 }
 
-If an article is clearly not relevant to AML/financial crime topics, exclude it.
-All articles provided have already passed a keyword relevance filter, so most should be included.
-Return ALL relevant articles — do not cap or trim the list.
+EXCLUSION RULES — exclude an article if it is any of the following:
+- A generic reference or educational page (e.g. "What is money laundering?", "What is a FIU?")
+- A regulatory agency homepage or resource page (e.g. "Anti-Money Laundering - MAS", "FinCEN.gov")
+- A PDF document without a specific news event
+- A guide, explainer, or "how to comply" article with no specific news event
+- Clearly not related to AML/financial crime
+
+Include articles that report a specific news event, enforcement action, court case, fine, arrest, regulatory finding, or typology study published recently.
+Return ALL qualifying articles — do not cap or trim the list.
 """
 
 
