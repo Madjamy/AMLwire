@@ -33,18 +33,35 @@ Only include items materially related to one or more of:
 - Cybercrime with clear financial crime relevance
 
 TYPOLOGY ANALYSIS RULE
-For each article, identify any explicit or strongly implied AML typology:
-- Layering | Structuring / smurfing | Trade-based money laundering
-- Shell companies | Beneficial ownership concealment | Crypto mixing / tumblers
-- Mule accounts | Sanctions evasion networks | Invoice fraud
-- Offshore concealment | Terror finance channels | Cash-intensive business laundering
-- Professional enablers | Darknet-enabled laundering | Hawala / informal value transfer
+You MUST select aml_typology from ONLY the following standardised list. Use the exact label as written:
 
-If no concrete typology is inferable, label it: "General AML news" or "Sanctions case"
+Layering and placement
+Structuring / smurfing
+Trade-based money laundering
+Shell companies and beneficial ownership concealment
+Crypto mixing and tumbling
+Cryptocurrency-based laundering
+Sanctions evasion
+Mule accounts
+Hawala and informal value transfer
+Professional enablers
+Darknet-enabled laundering
+Cash-intensive business laundering
+Real estate laundering
+Offshore concealment
+Terror financing
+Cyber-enabled fraud laundering
+Drug trafficking proceeds laundering
+Human trafficking proceeds laundering
+AML compliance failure
+General AML news
+
+Pick the single best-fit label. If multiple apply, choose the most specific one.
+If none fit, use: "General AML news"
 
 CATEGORY RULE
-- Set category = "typology" if a specific typology is identified
-- Set category = "news" if it is general AML news or a sanctions case
+- Set category = "typology" if the label is anything other than "General AML news" or "AML compliance failure"
+- Set category = "news" for "General AML news" or "AML compliance failure"
 
 COUNTRY/REGION RULE
 - country: the most specific country identified (e.g. "Australia", "India")
