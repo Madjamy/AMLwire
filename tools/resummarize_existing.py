@@ -19,7 +19,7 @@ if hasattr(sys.stdout, "reconfigure"):
 load_dotenv()
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_MODEL = "google/gemini-2.5-flash-lite"
+OPENROUTER_MODEL = "x-ai/grok-4.1-fast"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 SYSTEM_PROMPT = """You are a financial crime intelligence analyst. For each article provided, write a detailed factual summary.

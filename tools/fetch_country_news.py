@@ -53,10 +53,14 @@ TOPIC_KEYWORDS = [
     "money laundering", "aml", "anti-money laundering", "sanctions", "tax evasion",
     "tax fraud", "financial crime", "typology", "suspicious transaction", "fatf",
     "shell company", "beneficial ownership", "smurfing", "structuring", "layering",
-    "trade-based money laundering", "crypto mixing", "mule account", "terror finance",
-    "human trafficking", "drug trafficking", "organized crime", "cybercrime",
+    "trade-based money laundering", "tbml", "crypto mixing", "mule account",
+    "terror finance", "terrorist financing", "human trafficking", "smuggling",
+    "drug trafficking", "narco", "organized crime", "cybercrime", "cyber fraud",
     "enforcement action", "compliance failure", "suspicious activity report",
-    "darknet", "sanctions evasion", "fraud",
+    "darknet", "sanctions evasion", "hawala", "informal value transfer",
+    "real estate laundering", "professional enabler", "beneficial owner",
+    "pep", "politically exposed", "bribery", "corruption", "proceeds of crime",
+    "asset seizure", "confiscation", "deferred prosecution", "conviction", "fraud",
 ]
 
 

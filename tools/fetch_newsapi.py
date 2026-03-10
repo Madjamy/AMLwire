@@ -15,26 +15,59 @@ NEWSAPI_KEYS = [k for k in [os.getenv("NEWSAPI_KEY_1"), os.getenv("NEWSAPI_KEY_2
 NEWSAPI_URL = "https://newsapi.org/v2/everything"
 
 AML_QUERIES = [
+    # Core AML
     "money laundering",
     "AML enforcement",
-    "sanctions violation",
-    "tax evasion fraud",
+    "anti-money laundering compliance",
     "financial crime typology",
-    "anti-money laundering",
-    "FATF compliance",
-    "suspicious transaction",
-    "terror financing",
-    "shell company fraud",
+    "FATF compliance evaluation",
+    "suspicious transaction report",
+    # Sanctions
+    "sanctions violation evasion",
+    "OFAC SDN sanctions enforcement",
+    # Tax crimes
+    "tax evasion fraud prosecution",
+    "offshore tax fraud money laundering",
+    # Shell companies and ownership
+    "shell company beneficial ownership fraud",
+    "nominee director money laundering",
+    # Crypto
+    "crypto money laundering enforcement",
+    "cryptocurrency sanctions evasion",
+    # Human trafficking financial
+    "human trafficking money laundering proceeds",
+    # Drug trafficking financial
+    "drug trafficking money laundering seizure",
+    # Hawala and informal transfer
+    "hawala money transfer illegal",
+    # Trade-based laundering
+    "trade based money laundering invoice fraud",
+    # Real estate
+    "real estate money laundering property",
+    # Professional enablers
+    "accountant lawyer money laundering enabler",
+    # Terror finance
+    "terror financing AML enforcement",
+    # Organized crime
+    "organized crime money laundering",
+    # Cyber fraud financial
+    "cybercrime fraud money laundering",
+    # Corruption / PEP
+    "politically exposed person bribery corruption",
 ]
 
 TOPIC_KEYWORDS = [
     "money laundering", "aml", "anti-money laundering", "sanctions", "tax evasion",
     "tax fraud", "financial crime", "typology", "suspicious transaction", "fatf",
     "shell company", "beneficial ownership", "smurfing", "structuring", "layering",
-    "trade-based money laundering", "crypto mixing", "mule account", "terror finance",
-    "human trafficking", "drug trafficking", "organized crime", "cybercrime",
+    "trade-based money laundering", "tbml", "crypto mixing", "mule account",
+    "terror finance", "terrorist financing", "human trafficking", "smuggling",
+    "drug trafficking", "narco", "organized crime", "cybercrime", "cyber fraud",
     "enforcement action", "compliance failure", "suspicious activity report",
-    "darknet", "sanctions evasion",
+    "darknet", "sanctions evasion", "hawala", "informal value transfer",
+    "real estate laundering", "professional enabler", "beneficial owner",
+    "pep", "politically exposed", "bribery", "corruption", "proceeds of crime",
+    "asset seizure", "confiscation", "deferred prosecution", "conviction",
 ]
 
 

@@ -2,12 +2,13 @@
 AMLWire.com — Main Orchestrator
 Daily pipeline:
   1. Global AML news (NewsAPI)
-  2. Country-specific news (AU, USA, UK, India, Singapore, UAE — top 5 each, NewsAPI)
-  3. Deduplicate (within batch + against Supabase)
-  4. AI analysis (OpenRouter) — enriches with country, category, tags, typology
-  5. Image generation per article (Gemini 2.5 Flash via OpenRouter -> Supabase Storage)
-  6. Upload articles to Supabase
-  7. Generate + upload typology summaries
+  2. Tavily deep search — full article content, covers human trafficking, hawala, TBML, etc.
+  3. Country-specific news (AU, USA, UK, India, Singapore, UAE — top 5 each, NewsAPI + Tavily)
+  4. Deduplicate (within batch + against Supabase)
+  5. AI analysis (OpenRouter / Grok 4.1 Fast) — enriches with country, category, tags, typology
+  6. Image generation per article (Gemini 2.5 Flash via OpenRouter -> Supabase Storage)
+  7. Upload articles to Supabase
+  8. Generate + upload typology summaries
 
 Usage:
     python main.py
@@ -39,7 +40,7 @@ def run_pipeline():
     log.info("=" * 65)
 
     # Step 1: Global NewsAPI
-    log.info("Step 1/7 -- Global fetch: NewsAPI...")
+    log.info("Step 1/8 -- Global fetch: NewsAPI...")
     try:
         from tools.fetch_newsapi import fetch_articles as fetch_newsapi
         newsapi_articles = fetch_newsapi()
@@ -48,8 +49,18 @@ def run_pipeline():
         log.error(f"  NewsAPI failed: {e}")
         newsapi_articles = []
 
-    # Step 2: Country-specific (top 5 per country via NewsAPI)
-    log.info("Step 2/7 -- Country fetch: AU, USA, UK, India, Singapore, UAE (top 5 each)...")
+    # Step 2: Tavily deep search (full content, broad topic coverage)
+    log.info("Step 2/8 -- Tavily deep search: human trafficking, hawala, TBML, crypto, sanctions...")
+    try:
+        from tools.fetch_tavily import fetch_articles as fetch_tavily
+        tavily_articles = fetch_tavily()
+        log.info(f"  Tavily: {len(tavily_articles)} articles")
+    except Exception as e:
+        log.error(f"  Tavily failed: {e}")
+        tavily_articles = []
+
+    # Step 3: Country-specific (top 5 per country via NewsAPI)
+    log.info("Step 3/8 -- Country fetch: AU, USA, UK, India, Singapore, UAE (top 5 each)...")
     try:
         from tools.fetch_country_news import fetch_country_articles
         country_articles = fetch_country_articles()
@@ -58,15 +69,15 @@ def run_pipeline():
         log.error(f"  Country fetch failed: {e}")
         country_articles = []
 
-    all_articles = newsapi_articles + country_articles
+    all_articles = newsapi_articles + tavily_articles + country_articles
     log.info(f"  Combined total: {len(all_articles)} candidate articles")
 
     if not all_articles:
         log.warning("No articles fetched. Exiting.")
         return
 
-    # Step 3: Deduplicate
-    log.info("Step 3/7 -- Deduplicating...")
+    # Step 4: Deduplicate
+    log.info("Step 4/8 -- Deduplicating...")
     try:
         from tools.deduplicate import deduplicate
         clean_articles = deduplicate(all_articles)
@@ -79,8 +90,8 @@ def run_pipeline():
         log.info("All articles already in Supabase. Nothing new to process.")
         return
 
-    # Step 4: AI Analysis
-    log.info(f"Step 4/7 -- AI analysis of {len(clean_articles)} articles...")
+    # Step 5: AI Analysis
+    log.info(f"Step 5/8 -- AI analysis of {len(clean_articles)} articles...")
     try:
         from tools.analyze_articles import analyze_articles
         analyzed = analyze_articles(clean_articles)
@@ -133,8 +144,8 @@ def run_pipeline():
         log.warning("No fresh articles to upload.")
         return
 
-    # Step 5: Image generation
-    log.info(f"Step 5/7 -- Generating cover images for {len(analyzed)} articles...")
+    # Step 6: Image generation
+    log.info(f"Step 6/8 -- Generating cover images for {len(analyzed)} articles...")
     try:
         from tools.generate_image import generate_image
         for article in analyzed:
@@ -153,8 +164,8 @@ def run_pipeline():
         for article in analyzed:
             article.setdefault("image_url", None)
 
-    # Step 6: Upload articles
-    log.info("Step 6/7 -- Uploading articles to Supabase...")
+    # Step 7: Upload articles
+    log.info("Step 7/8 -- Uploading articles to Supabase...")
     try:
         from tools.upload_supabase import upload_articles
         uploaded = upload_articles(analyzed)
@@ -162,8 +173,8 @@ def run_pipeline():
     except Exception as e:
         log.error(f"  Article upload failed: {e}")
 
-    # Step 7: Typology summaries
-    log.info("Step 7/7 -- Generating typology summaries...")
+    # Step 8: Typology summaries
+    log.info("Step 8/8 -- Generating typology summaries...")
     try:
         from tools.generate_typology_summary import generate_typology_summaries
         from tools.upload_supabase import upload_typology_summaries
