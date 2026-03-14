@@ -308,7 +308,15 @@ _RESOURCE_PATH_PATTERNS = re.compile(
     r"|technical-assistance|capacity-building"
     r"|virtual-library|abstracts|techniques/T\d"  # academic libs, AMLTRIX technique pages
     r"|press_releases?|announce/detail"           # press release wires
-    r"|online_features)(?:/|$)",
+    r"|online_features"
+    r"|search[-_]page|search\?|core-guidance(?:/[^/]+){0,1}$"  # nav/search pages, AUSTRAC guidance index
+    r"|latest[-_]guidance[-_]updates|news\.html$|rss(?:\.xml)?$)(?:/|$)",  # AUSTRAC nav, RSS URLs themselves
+    re.IGNORECASE,
+)
+
+# Block PDFs whose URL path clearly contains an old year (before 3 years ago) — avoids surfacing stale docs
+_OLD_PDF_YEAR_PATTERN = re.compile(
+    r"/(?:200\d|201[0-9]|202[0-3])-\d{2}/.*\.pdf$",
     re.IGNORECASE,
 )
 
@@ -352,6 +360,8 @@ _EVERGREEN_WHY_PATTERN = re.compile(
 def _is_resource_url(url: str) -> bool:
     """Return True if the URL is a reference/resource page or blocked domain."""
     if _RESOURCE_PATH_PATTERNS.search(url):
+        return True
+    if _OLD_PDF_YEAR_PATTERN.search(url):
         return True
     # Extract domain (strip www.)
     m = re.search(r"https?://(?:www\.)?([^/]+)", url)
