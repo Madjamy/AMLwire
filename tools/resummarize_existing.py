@@ -81,6 +81,12 @@ Use specific language. Never "funds were moved" — say exactly HOW, through WHA
 TYPOLOGY — select the single best-fit label from this exact list:
 Structuring / Smurfing | Trade-based money laundering (TBML) | Shell companies and nominee ownership | Real estate laundering | Cash-intensive business laundering | Offshore concealment | Crypto-asset laundering | Crypto mixing / tumbling | Darknet-enabled laundering | Money mules | Hawala and informal value transfer | Pig butchering / romance investment scam | Business Email Compromise (BEC) | Ransomware proceeds | Synthetic identity fraud | Deepfake / AI-enabled fraud | Environmental crime proceeds | NFT / DeFi fraud | Sanctions evasion | Professional enablers | Terrorist financing | Drug trafficking proceeds | Human trafficking proceeds | Cybercrime proceeds | AML compliance failure | AML News
 
+Pick based on WHAT THE ARTICLE IS PRIMARILY ABOUT — not the predicate crime in the background.
+Key disambiguation:
+- If the article's PRIMARY focus is a bank/institution FAILING its AML duties (ignoring SARs, retaining risky clients, inadequate controls) → "AML compliance failure", even if the underlying crime is trafficking or drugs
+- Use "Human trafficking proceeds" / "Drug trafficking proceeds" ONLY when the article describes HOW laundering of those proceeds was conducted
+- If multiple labels fit, pick the one most useful to AML compliance professionals reading it
+
 TAGS (4-7 lowercase tags):
 Include: typology slug, jurisdiction(s), financial sector, named entities/programmes.
 

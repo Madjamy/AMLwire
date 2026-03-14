@@ -124,7 +124,12 @@ Cybercrime proceeds
 AML compliance failure
 AML News
 
-Pick the single best-fit label. If multiple apply, choose the most specific one. If none fit, use: "AML News"
+Pick the single best-fit label based on WHAT THE ARTICLE IS PRIMARILY ABOUT — not the predicate crime in the background.
+Key disambiguation rules:
+- If the article's PRIMARY focus is a bank/institution FAILING its AML duties (ignoring SARs, retaining high-risk clients, inadequate controls) → use "AML compliance failure", even if the underlying crime is trafficking or drugs
+- Use "Human trafficking proceeds", "Drug trafficking proceeds" etc. ONLY when the article describes HOW the laundering of those proceeds was conducted — not when it's about a bank's failure to report it
+- If multiple labels apply, pick the one closest to the article's main insight for AML compliance professionals
+If none fit, use: "AML News"
 
 TYPOLOGY GUIDANCE — RED FLAGS AND INDICATORS
 
