@@ -109,10 +109,19 @@ def run_pipeline():
 
     # Step 6: Drop articles with no publish date
     log.info("Step 6/12 -- Filtering articles with no publish date...")
-    with_date = [a for a in all_articles if (a.get("published_at") or "").strip()]
-    no_date = len(all_articles) - len(with_date)
-    if no_date:
-        log.info(f"  Dropped {no_date} articles with no publish date")
+    with_date = []
+    no_date_articles = []
+    for a in all_articles:
+        if (a.get("published_at") or "").strip():
+            with_date.append(a)
+        else:
+            no_date_articles.append(a)
+    if no_date_articles:
+        log.info(f"  Dropped {len(no_date_articles)} articles with no publish date:")
+        for a in no_date_articles[:10]:  # Log first 10 for audit
+            log.info(f"    - [{a.get('source', '?')}] {a.get('title', '')[:70]}")
+        if len(no_date_articles) > 10:
+            log.info(f"    ... and {len(no_date_articles) - 10} more")
     all_articles = with_date
     log.info(f"  {len(all_articles)} articles with valid publish date")
 

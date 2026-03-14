@@ -310,7 +310,9 @@ _RESOURCE_PATH_PATTERNS = re.compile(
     r"|press_releases?|announce/detail"           # press release wires
     r"|online_features"
     r"|search[-_]page|search\?|core-guidance(?:/[^/]+){0,1}$"  # nav/search pages, AUSTRAC guidance index
-    r"|latest[-_]guidance[-_]updates|news\.html$|rss(?:\.xml)?$)(?:/|$)",  # AUSTRAC nav, RSS URLs themselves
+    r"|latest[-_]guidance[-_]updates|news\.html$|rss(?:\.xml)?$"  # AUSTRAC nav, RSS URLs themselves
+    r"|/en/countries/|/calendar/|/events/"  # FATF nav pages, event listings
+    r"|/tags?/|/category/|/archives?)(?:/|$)",  # tag/category listing pages
     re.IGNORECASE,
 )
 
@@ -386,13 +388,13 @@ def _is_relevant(text: str) -> bool:
     return any(kw in text for kw in TOPIC_KEYWORDS)
 
 
-def _extract_date(url: str, content: str) -> str:
+def _extract_date(url: str, content: str) -> tuple[str | None, str]:
     """
     Fallback date extraction when Tavily doesn't return published_date.
-    Priority: URL path date → date in content text → today's date.
-    Returns ISO date string YYYY-MM-DD.
+    Priority: URL path date → date in content text → None.
+    Returns (ISO date string or None, date_confidence).
+    date_confidence: "url_extracted" | "content_extracted" | "none"
     """
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     # 1. Try URL path for embedded dates
     url_patterns = [
@@ -413,7 +415,7 @@ def _extract_date(url: str, content: str) -> str:
                     y, mo, d = m.group(1), m.group(2), "01"
                 dt = datetime.strptime(f"{y}-{mo}-{d}", "%Y-%m-%d")
                 if datetime(2020, 1, 1) <= dt <= datetime.now():
-                    return dt.strftime("%Y-%m-%d")
+                    return dt.strftime("%Y-%m-%d"), "url_extracted"
             except ValueError:
                 pass
 
@@ -438,17 +440,17 @@ def _extract_date(url: str, content: str) -> str:
             try:
                 if i == 0:   # Month DD, YYYY
                     mo = month_map[m.group(1)[:3].lower()]
-                    return f"{m.group(3)}-{mo}-{int(m.group(2)):02d}"
+                    return f"{m.group(3)}-{mo}-{int(m.group(2)):02d}", "content_extracted"
                 elif i == 1:  # DD Month YYYY
                     mo = month_map[m.group(2)[:3].lower()]
-                    return f"{m.group(3)}-{mo}-{int(m.group(1)):02d}"
+                    return f"{m.group(3)}-{mo}-{int(m.group(1)):02d}", "content_extracted"
                 elif i == 2:  # ISO
-                    return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+                    return f"{m.group(1)}-{m.group(2)}-{m.group(3)}", "content_extracted"
             except (KeyError, ValueError):
                 pass
 
-    # 3. Fall back to today (safe: Tavily days=7 guarantees recency)
-    return today
+    # 3. No date found — return None instead of today's date
+    return None, "none"
 
 
 def _search_regulatory(query: str, domains: list[str], days: int = 90, country_tag: str = "") -> list[dict]:
@@ -487,16 +489,18 @@ def _search_regulatory(query: str, domains: list[str], days: int = 90, country_t
                 try:
                     from email.utils import parsedate_to_datetime
                     published = parsedate_to_datetime(tavily_date).strftime("%Y-%m-%d")
+                    date_confidence = "api"
                 except Exception:
-                    published = _extract_date(url, content)
+                    published, date_confidence = _extract_date(url, content)
             else:
-                published = _extract_date(url, content)
+                published, date_confidence = _extract_date(url, content)
 
             results.append({
                 "title": title,
                 "url": url,
                 "source": domains[0],
                 "published_at": published,
+                "date_confidence": date_confidence,
                 "description": content[:500] if content else "",
                 "content": content,
                 "api_source": "tavily_regulatory",
@@ -556,16 +560,18 @@ def _search(query: str, days: int = 7, country_tag: str = "") -> list[dict]:
                 try:
                     from email.utils import parsedate_to_datetime
                     published = parsedate_to_datetime(tavily_date).strftime("%Y-%m-%d")
+                    date_confidence = "api"
                 except Exception:
-                    published = _extract_date(url, content)
+                    published, date_confidence = _extract_date(url, content)
             else:
-                published = _extract_date(url, content)
+                published, date_confidence = _extract_date(url, content)
 
             results.append({
                 "title": title,
                 "url": url,
                 "source": item.get("source", ""),
                 "published_at": published,
+                "date_confidence": date_confidence,
                 "description": content[:500] if content else "",
                 "content": content,
                 "api_source": "tavily",

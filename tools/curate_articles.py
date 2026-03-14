@@ -4,12 +4,13 @@ Curate analyzed articles for global diversity and quality.
 Rules:
 - Country cap: USA max 4, UK/Australia max 3, all others max 2
 - Quality priority: articles with specific typologies rank above generic "AML News"
-- Total cap: MAX_TOTAL articles published to the site
+- Total cap: MAX_TOTAL articles published to the site (configurable via CURATION_MAX_TOTAL env var)
 - Within each country bucket, typology-specific articles are preferred over AML News
 
 This runs AFTER AI analysis and BEFORE upload.
 """
 
+import os
 from collections import defaultdict
 
 # Country caps — any country not listed uses DEFAULT_CAP
@@ -24,8 +25,8 @@ COUNTRY_CAPS = {
 }
 DEFAULT_CAP = 2
 
-# Absolute ceiling on articles published per pipeline run
-MAX_TOTAL = 40
+# Absolute ceiling on articles published per pipeline run (configurable via env var)
+MAX_TOTAL = int(os.getenv("CURATION_MAX_TOTAL", "40"))
 
 # Typologies that signal rich modus operandi content — ranked higher
 HIGH_VALUE_TYPOLOGIES = {
@@ -92,7 +93,8 @@ def curate_articles(articles: list[dict]) -> list[dict]:
             curated.append(article)
             country_counts[country] += 1
 
-    # Log the breakdown
+    # Log overflow (articles that didn't make the cut)
+    overflow = len(articles) - len(curated)
     breakdown = sorted(country_counts.items(), key=lambda x: x[1], reverse=True)
     print(f"[Curate] {len(articles)} → {len(curated)} articles after curation (cap: {MAX_TOTAL})")
     print(f"[Curate] Country breakdown: {', '.join(f'{c}:{n}' for c, n in breakdown)}")
@@ -102,5 +104,16 @@ def curate_articles(articles: list[dict]) -> list[dict]:
         cap = COUNTRY_CAPS.get(country, DEFAULT_CAP)
         if count == cap:
             print(f"[Curate] Cap hit: {country} ({cap} articles max)")
+
+    # Log titles dropped by cap overflow
+    if overflow > 0:
+        curated_set = set(id(a) for a in curated)
+        dropped = [a for a in sorted_articles if id(a) not in curated_set]
+        print(f"[Curate] {overflow} articles dropped by cap:")
+        for a in dropped[:10]:
+            c = (a.get("country") or "?")
+            print(f"  - [{c}] {a.get('title', '')[:70]}")
+        if len(dropped) > 10:
+            print(f"  ... and {len(dropped) - 10} more")
 
     return curated

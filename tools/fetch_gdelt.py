@@ -58,7 +58,7 @@ def _gdelt_search(query: str, lookback_days: int) -> list[dict]:
     enddatetime = end_dt.strftime("%Y%m%d%H%M%S")
 
     params = {
-        "query":         query,
+        "query":         f"{query} sourcelang:eng",  # English articles only
         "mode":          "artlist",          # article list mode
         "maxrecords":    MAX_RESULTS,
         "startdatetime": startdatetime,
@@ -93,7 +93,9 @@ def _gdelt_search(query: str, lookback_days: int) -> list[dict]:
                     dt = datetime.strptime(raw_date[:15], "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc)
                     published = dt.strftime("%Y-%m-%d")
                 except Exception:
-                    pass
+                    print(f"  [GDELT] Date parse failed for '{title[:60]}' (raw: '{raw_date}') — URL: {url[:80]}")
+            else:
+                print(f"  [GDELT] No date for '{title[:60]}' — URL: {url[:80]}")
 
             source_name = item.get("domain", "")
             language = item.get("language", "English")

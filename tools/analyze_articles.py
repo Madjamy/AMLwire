@@ -23,9 +23,16 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "x-ai/grok-4.1-fast")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-SCRAPE_TIMEOUT = 10  # seconds per article scrape
+SCRAPE_TIMEOUT = 15  # seconds per article scrape (increased from 10)
+SCRAPE_MAX_RETRIES = 3
+SCRAPE_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+]
 SCRAPE_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "User-Agent": SCRAPE_USER_AGENTS[0],
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 
@@ -36,25 +43,32 @@ _REQUIRED_PHRASES = [
     # Core AML / financial crime
     "money laundering", "anti-money laundering", "aml compliance", "aml enforcement",
     "financial crime", "illicit finance", "illicit funds", "proceeds of crime",
-    "proceeds of fraud", "proceeds of corruption",
+    "proceeds of fraud", "proceeds of corruption", "illicit proceeds", "criminal proceeds",
     # Enforcement outcomes
     "enforcement action", "deferred prosecution", "asset forfeiture", "asset seizure",
     "compliance failure", "regulatory fine", "aml fine", "aml penalty",
     "convicted of fraud", "arrested for fraud", "indicted for fraud",
     "charged with laundering", "convicted of laundering", "guilty of laundering",
     "fined for aml", "fined for compliance",
+    "wire fraud", "bank fraud", "investment fraud",
+    "confiscation order", "cash seizure", "currency seizure",
     # Suspicious activity (financial sense only)
     "suspicious transaction", "suspicious activity report", "suspicious matter report",
-    "sar filing", "smr filing",
+    "sar filing", "smr filing", "suspicious matter",
     # Typologies — these phrases are unambiguous
     "structuring", "smurfing", "shell company", "shell companies",
     "beneficial ownership", "nominee director", "hawala", "trade-based money laundering",
     "tbml", "pig butchering", "romance scam", "money mule", "mule account",
     "crypto laundering", "crypto mixing", "sanctions evasion", "sanctions violation",
     "terrorist financing", "proliferation financing",
+    "unexplained wealth", "predicate offence", "predicate offense",
+    # Compliance / due diligence
+    "know your customer", "kyc", "customer due diligence",
+    "transaction monitoring", "correspondent banking", "de-risking",
     # Regulators / bodies (their names in context are unambiguous signals)
     "fatf", "fincen", "austrac", "egmont group", "moneyval",
     "apg aml", "wolfsberg", "financial intelligence unit", "fiu advisory",
+    "mutual evaluation", "national risk assessment", "pmla",
     # Specific crime types
     "kleptocracy", "bribery conviction", "corruption proceeds",
     "drug trafficking proceeds", "human trafficking proceeds",
@@ -62,19 +76,33 @@ _REQUIRED_PHRASES = [
     "deepfake fraud", "synthetic identity",
 ]
 
+# Soft-pass keywords for the two-tier filter: articles that fail the hard phrase match
+# but contain these broad keywords get scraped first, then re-checked against _REQUIRED_PHRASES
+_SOFT_PASS_KEYWORDS = [
+    "fraud", "seized", "convicted", "prosecution", "indicted", "arrested",
+    "sentenced", "forfeiture", "confiscated", "laundered", "embezzlement",
+    "bribery", "corruption", "trafficking", "sanctions", "compliance",
+    "regulatory", "enforcement", "penalty", "fine", "bank secrecy",
+]
 
-def _passes_pre_filter(article: dict) -> bool:
+
+def _passes_pre_filter(article: dict) -> str:
     """
-    Return True if the article title + description contains at least one
-    high-precision multi-word AML phrase. Drops noise (sports, politics,
-    physical crime) before it reaches the scraper or AI.
+    Two-tier pre-filter.
+    Returns: "hard_pass" if AML phrase found in title+description+content,
+             "soft_pass" if broad keyword found (needs scrape then re-check),
+             "drop" if nothing relevant found.
     """
     text = (
         (article.get("title") or "") + " " +
         (article.get("description") or "") + " " +
         (article.get("content") or "")
     ).lower()
-    return any(phrase in text for phrase in _REQUIRED_PHRASES)
+    if any(phrase in text for phrase in _REQUIRED_PHRASES):
+        return "hard_pass"
+    if any(kw in text for kw in _SOFT_PASS_KEYWORDS):
+        return "soft_pass"
+    return "drop"
 
 SYSTEM_PROMPT = """You are a Senior Financial Crime Intelligence Analyst and AML Expert powering AMLWire.com — a specialist intelligence platform for AML compliance professionals, financial crime investigators, and regulators worldwide.
 
@@ -288,7 +316,7 @@ DATE VERIFICATION RULE (CRITICAL)
 - If the Provided Published date appears to be today's fetch date but the article content clearly describes an older event, correct the published_date using the date from article content
 - ⚠️ If the Provided Published Date is marked with a WARNING (fetch date, not real publication date): you MUST find a date in the article content. If the content does not clearly confirm the article is from within the last 14 days, EXCLUDE it — do NOT assume it is recent just because the fetch date is today.
 - If content signals the article is from more than 14 days before today's date, EXCLUDE it entirely
-- Regulatory documents (mutual evaluations, FATF reports, AUSTRAC guidance) published more than 14 days ago must be EXCLUDED — even if the source URL is authoritative. Only include regulatory guidance published within the last 14 days.
+- Regulatory documents (mutual evaluations, FATF reports, AUSTRAC guidance) published more than 30 days ago must be EXCLUDED — even if the source URL is authoritative. Regulatory guidance published within the last 30 days is acceptable (they take longer to surface than breaking news).
 - For published_date in output: format as DD-MM-YYYY
 
 MODUS OPERANDI RULE
@@ -388,38 +416,54 @@ Return ALL qualifying articles — do not cap or trim the list.
 def _scrape_article(url: str) -> str:
     """
     Scrape full article text from URL using BeautifulSoup.
-    Returns plain text (up to 5000 chars) or empty string on failure.
+    Returns plain text (up to 12000 chars) or empty string on failure.
+    Retries up to 3 times with backoff and User-Agent rotation.
     """
+    import time as _time
     try:
-        resp = requests.get(url, headers=SCRAPE_HEADERS, timeout=SCRAPE_TIMEOUT)
-        if resp.status_code != 200:
-            return ""
-        try:
-            from bs4 import BeautifulSoup
-        except ImportError:
-            return ""
-
-        soup = BeautifulSoup(resp.text, "html.parser")
-        # Remove scripts, styles, nav, footer, ads
-        for tag in soup(["script", "style", "nav", "footer", "header", "aside",
-                          "form", "button", "noscript", "iframe", "svg"]):
-            tag.decompose()
-
-        # Try article/main content first
-        body = None
-        for selector in ["article", "main", ".article-body", ".entry-content",
-                         ".post-content", ".story-body", "[itemprop='articleBody']"]:
-            body = soup.select_one(selector)
-            if body:
-                break
-        if not body:
-            body = soup.body or soup
-
-        text = body.get_text(separator=" ", strip=True)
-        text = re.sub(r"\s+", " ", text).strip()
-        return text[:5000]
-    except Exception:
+        from bs4 import BeautifulSoup
+    except ImportError:
         return ""
+
+    for attempt in range(SCRAPE_MAX_RETRIES):
+        try:
+            headers = {
+                "User-Agent": SCRAPE_USER_AGENTS[attempt % len(SCRAPE_USER_AGENTS)],
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            }
+            timeout = SCRAPE_TIMEOUT if attempt == 0 else 20  # Longer timeout on retry
+            resp = requests.get(url, headers=headers, timeout=timeout)
+            if resp.status_code != 200:
+                if attempt < SCRAPE_MAX_RETRIES - 1:
+                    _time.sleep(2 * (attempt + 1))  # 2s, 4s backoff
+                    continue
+                return ""
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+            # Remove scripts, styles, nav, footer, ads
+            for tag in soup(["script", "style", "nav", "footer", "header", "aside",
+                              "form", "button", "noscript", "iframe", "svg"]):
+                tag.decompose()
+
+            # Try article/main content first
+            body = None
+            for selector in ["article", "main", ".article-body", ".entry-content",
+                             ".post-content", ".story-body", "[itemprop='articleBody']"]:
+                body = soup.select_one(selector)
+                if body:
+                    break
+            if not body:
+                body = soup.body or soup
+
+            text = body.get_text(separator=" ", strip=True)
+            text = re.sub(r"\s+", " ", text).strip()
+            return text[:12000]
+        except Exception:
+            if attempt < SCRAPE_MAX_RETRIES - 1:
+                _time.sleep(2 * (attempt + 1))
+                continue
+            return ""
+    return ""
 
 
 def _build_user_prompt(articles: list[dict], current_date: str) -> str:
@@ -435,9 +479,12 @@ def _build_user_prompt(articles: list[dict], current_date: str) -> str:
         lines.append(f"URL: {a.get('url', '')}")
         lines.append(f"Country (if known): {a.get('country', '')}")
         pub_date = a.get('published_at', '')
+        date_confidence = a.get('date_confidence', '')
         date_warning = ""
-        if pub_date == current_date:
+        if date_confidence == "none" or (not date_confidence and pub_date == current_date):
             date_warning = " ⚠️ WARNING: No publication date was found by the fetcher — this date is the FETCH DATE, not the real publication date. You MUST find the actual date from the article content. If you cannot confirm the article is recent (within 14 days), EXCLUDE it."
+        elif date_confidence == "content_extracted":
+            date_warning = " ⚠️ NOTE: This date was extracted from article text (not from API metadata). Verify it matches the actual publication date."
         lines.append(f"Provided Published Date: {pub_date}{date_warning}")
 
         # Use scraped full text if available, else fall back to Tavily content/description
@@ -445,13 +492,13 @@ def _build_user_prompt(articles: list[dict], current_date: str) -> str:
         if scraped:
             lines.append(f"Full Article Text (scraped): {scraped}")
         else:
-            fallback = (a.get("content") or a.get("description") or "")[:3000]
+            fallback = (a.get("content") or a.get("description") or "")[:5000]
             lines.append(f"Content: {fallback}")
         lines.append("")
     return "\n".join(lines)
 
 
-BATCH_SIZE = 20  # Reduced from 50 — articles are now larger with scraped text
+BATCH_SIZE = 10  # Smaller batches = less data loss per failure + better AI quality
 
 # Canonical typology vocabulary — AI must pick from this list
 CANONICAL_TYPOLOGIES = {
@@ -521,7 +568,7 @@ def _normalise_typology(typology: str) -> str:
           "penalty", "enforcement action"],                                  "AML compliance failure"),
     ]
     for keywords, canon in keyword_map:
-        if any(kw in lower for kw in keywords):
+        if any(re.search(r'\b' + re.escape(kw), lower) for kw in keywords):
             print(f"[Analyze] Typology normalised: '{typology}' -> '{canon}'")
             return canon
     print(f"[Analyze] Unknown typology, defaulting to AML News: '{typology}'")
@@ -529,18 +576,35 @@ def _normalise_typology(typology: str) -> str:
 
 
 def _scrape_batch(articles: list[dict]) -> list[dict]:
-    """Scrape full text for each article URL, attach as _scraped_text."""
-    for a in articles:
-        url = a.get("url", "")
+    """Scrape full text for each article URL in parallel, attach as _scraped_text."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from tools.audit_logger import log_scrape_failure
+
+    def _scrape_one(article):
+        url = article.get("url", "")
         if not url:
-            a["_scraped_text"] = ""
-            continue
+            article["_scraped_text"] = ""
+            return article
         text = _scrape_article(url)
-        a["_scraped_text"] = text
+        article["_scraped_text"] = text
         if text:
             print(f"  [Scrape] {len(text)} chars from {url[:60]}")
         else:
             print(f"  [Scrape] Failed/paywall: {url[:60]}")
+            log_scrape_failure(url, "Empty response after retries")
+        return article
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = {executor.submit(_scrape_one, a): a for a in articles}
+        for future in as_completed(futures):
+            try:
+                future.result()
+            except Exception as e:
+                a = futures[future]
+                a["_scraped_text"] = ""
+                url = a.get("url", "?")
+                print(f"  [Scrape] Exception for {url[:60]}: {e}")
+                log_scrape_failure(url, str(e))
     return articles
 
 
@@ -577,10 +641,44 @@ def _call_ai(client, articles: list[dict], current_date: str) -> list[dict]:
     except json.JSONDecodeError as e:
         print(f"[Analyze] JSON parse error: {e}")
         print(f"[Analyze] Raw response: {raw[:500]}")
-        return []
+        # Per-article recovery: try to split and parse individual articles
+        recovered = _recover_json_articles(raw)
+        if recovered:
+            print(f"[Analyze] Recovered {len(recovered)} articles from malformed JSON")
+            for item in recovered:
+                if "aml_typology" in item:
+                    item["aml_typology"] = _normalise_typology(item["aml_typology"])
+        return recovered
     except Exception as e:
         print(f"[Analyze] OpenRouter API error: {e}")
         return []
+
+
+def _recover_json_articles(raw: str) -> list[dict]:
+    """Attempt to recover individual article JSON objects from a malformed response."""
+    recovered = []
+    # Try fixing common issues: trailing commas, truncated JSON
+    for fix in [raw, raw.rstrip(",\n ") + "]", "[" + raw.rstrip(",\n ") + "]"]:
+        try:
+            result = json.loads(fix)
+            if isinstance(result, list):
+                return result
+            return [result]
+        except json.JSONDecodeError:
+            continue
+
+    # Split on },{ and try each article individually
+    # Find all potential JSON objects by matching braces
+    import re
+    objects = re.findall(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', raw)
+    for obj_str in objects:
+        try:
+            obj = json.loads(obj_str)
+            if isinstance(obj, dict) and ("title" in obj or "aml_typology" in obj):
+                recovered.append(obj)
+        except json.JSONDecodeError:
+            continue
+    return recovered
 
 
 def analyze_articles(articles: list[dict]) -> list[dict]:
@@ -593,14 +691,45 @@ def analyze_articles(articles: list[dict]) -> list[dict]:
     if not articles:
         return []
 
-    # Pre-filter: drop articles that don't contain at least one high-precision
-    # AML phrase. This eliminates sports/politics/physical-crime noise before
-    # scraping or AI calls, saving both time and API cost.
-    pre_filtered = [a for a in articles if _passes_pre_filter(a)]
-    dropped = len(articles) - len(pre_filtered)
-    if dropped:
-        print(f"[Analyze] Pre-filter dropped {dropped}/{len(articles)} articles (no AML signal phrases)")
-    articles = pre_filtered
+    # Two-tier pre-filter with audit logging
+    from tools.audit_logger import log_prefilter_drop
+
+    hard_pass = []
+    soft_pass = []
+    dropped_articles = []
+    for a in articles:
+        result = _passes_pre_filter(a)
+        if result == "hard_pass":
+            hard_pass.append(a)
+        elif result == "soft_pass":
+            soft_pass.append(a)
+        else:
+            dropped_articles.append(a)
+            log_prefilter_drop(a, "No AML phrase or broad keyword found")
+
+    # Soft-pass articles: scrape first, then re-check against _REQUIRED_PHRASES
+    if soft_pass:
+        print(f"[Analyze] Soft-pass: scraping {len(soft_pass)} borderline articles for re-check...")
+        soft_pass = _scrape_batch(soft_pass)
+        promoted = []
+        for a in soft_pass:
+            scraped_text = (a.get("_scraped_text") or "").lower()
+            if any(phrase in scraped_text for phrase in _REQUIRED_PHRASES):
+                promoted.append(a)
+                print(f"  [Pre-filter] Promoted after scrape: {a.get('title', '')[:60]}")
+            else:
+                log_prefilter_drop(a, "Soft-pass failed: no AML phrase in scraped text")
+        hard_pass.extend(promoted)
+        print(f"[Analyze] Soft-pass promoted {len(promoted)}/{len(soft_pass)} articles")
+
+    if dropped_articles:
+        print(f"[Analyze] Pre-filter dropped {len(dropped_articles)}/{len(articles)} articles")
+        for a in dropped_articles[:5]:
+            print(f"  - {a.get('title', '')[:70]}")
+        if len(dropped_articles) > 5:
+            print(f"  ... and {len(dropped_articles) - 5} more")
+    print(f"[Analyze] {len(hard_pass)}/{len(articles)} articles passed pre-filter")
+    articles = hard_pass
 
     if not articles:
         print("[Analyze] No articles passed pre-filter.")
@@ -614,6 +743,8 @@ def analyze_articles(articles: list[dict]) -> list[dict]:
     current_date = datetime.now(timezone.utc).strftime("%d-%m-%Y")
     all_analyzed = []
 
+    import time as _time
+
     for i in range(0, len(articles), BATCH_SIZE):
         batch = articles[i: i + BATCH_SIZE]
         batch_num = i // BATCH_SIZE + 1
@@ -623,9 +754,24 @@ def analyze_articles(articles: list[dict]) -> list[dict]:
         # Step 1: scrape full text for each article
         batch = _scrape_batch(batch)
 
-        # Step 2: send to Grok
+        # Step 2: send to Grok with retry logic
         print(f"[Analyze] Sending batch {batch_num} to {OPENROUTER_MODEL}...")
         results = _call_ai(client, batch, current_date)
+
+        # Retry on failure: wait 5s, then retry. If batch > 5, split in half.
+        if not results:
+            print(f"[Analyze] Batch {batch_num} failed — retrying after 5s...")
+            _time.sleep(5)
+            results = _call_ai(client, batch, current_date)
+
+            if not results and len(batch) > 5:
+                print(f"[Analyze] Retry failed — splitting batch {batch_num} in half...")
+                mid = len(batch) // 2
+                results_a = _call_ai(client, batch[:mid], current_date)
+                _time.sleep(2)
+                results_b = _call_ai(client, batch[mid:], current_date)
+                results = (results_a or []) + (results_b or [])
+
         all_analyzed.extend(results)
 
         # Clean up scraped text from batch dicts (not needed after analysis)

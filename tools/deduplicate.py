@@ -27,7 +27,7 @@ _STOP_WORDS = {
 }
 
 # Minimum word overlap ratio to treat two titles as the same story
-_TITLE_SIMILARITY_THRESHOLD = 0.50  # Lowered from 0.60 — catches "Pope announces" vs "Pope accepts" etc.
+_TITLE_SIMILARITY_THRESHOLD = 0.60  # Raised back: 0.50 caused false-positive dedup across different countries
 
 # If first N significant words match exactly → always treat as duplicate
 _PREFIX_MATCH_WORDS = 4
@@ -47,11 +47,14 @@ def _title_word_list(title: str) -> list[str]:
 
 def _titles_are_similar(a: frozenset, b: frozenset,
                         a_words: list[str] | None = None,
-                        b_words: list[str] | None = None) -> bool:
+                        b_words: list[str] | None = None,
+                        a_country: str = "",
+                        b_country: str = "") -> bool:
     """
     Return True if titles are near-duplicates via:
     1. First-N-words prefix match (catches same story with different endings)
     2. Jaccard similarity >= threshold (catches paraphrased same-story titles)
+    If articles have different known countries, require higher overlap (0.75).
     """
     if not a or not b:
         return False
@@ -59,10 +62,14 @@ def _titles_are_similar(a: frozenset, b: frozenset,
     if a_words and b_words and len(a_words) >= _PREFIX_MATCH_WORDS and len(b_words) >= _PREFIX_MATCH_WORDS:
         if a_words[:_PREFIX_MATCH_WORDS] == b_words[:_PREFIX_MATCH_WORDS]:
             return True
-    # Jaccard similarity
+    # Jaccard similarity — higher threshold if different countries
     intersection = len(a & b)
     union = len(a | b)
-    return (intersection / union) >= _TITLE_SIMILARITY_THRESHOLD
+    ratio = intersection / union
+    # If both have known but different countries, require 0.75 overlap
+    if a_country and b_country and a_country.lower() != b_country.lower():
+        return ratio >= 0.75
+    return ratio >= _TITLE_SIMILARITY_THRESHOLD
 
 
 def _parse_date(date_str: str) -> datetime | None:
@@ -122,6 +129,7 @@ def deduplicate(articles: list[dict]) -> list[dict]:
     seen_urls: set[str] = set()
     seen_title_sets: list[frozenset] = list(existing_title_sets)
     seen_title_words: list[list[str]] = list(existing_title_words)
+    seen_countries: list[str] = [""] * len(existing_title_sets)  # No country info for existing
     clean = []
     skipped_title_dedup = 0
 
@@ -144,20 +152,24 @@ def deduplicate(articles: list[dict]) -> list[dict]:
         if not _is_within_cutoff(article):
             continue
 
-        # Near-duplicate title check (Jaccard + prefix)
+        # Near-duplicate title check (Jaccard + prefix + country awareness)
         title = article.get("title", "")
+        country = (article.get("country") or "").strip()
         norm = _normalise_title(title)
         words = _title_word_list(title)
         if norm:
             is_dup = any(
-                _titles_are_similar(norm, existing_set, words, existing_words)
-                for existing_set, existing_words in zip(seen_title_sets, seen_title_words)
+                _titles_are_similar(norm, existing_set, words, existing_words,
+                                    country, existing_country)
+                for existing_set, existing_words, existing_country
+                in zip(seen_title_sets, seen_title_words, seen_countries)
             )
             if is_dup:
                 skipped_title_dedup += 1
                 continue
             seen_title_sets.append(norm)
             seen_title_words.append(words)
+            seen_countries.append(country)
 
         seen_urls.add(url)
         clean.append(article)

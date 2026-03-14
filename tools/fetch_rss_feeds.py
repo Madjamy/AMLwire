@@ -114,12 +114,12 @@ def _parse_date(entry) -> str | None:
 
 def _is_recent(date_str: str | None, cutoff: datetime) -> bool:
     if not date_str:
-        return True  # Include if date unknown — let AI filter
+        return False  # Reject dateless articles — prevents stale content slipping through
     try:
         dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         return dt >= cutoff
     except Exception:
-        return True
+        return False  # Unparseable dates are also rejected
 
 
 def _is_aml_relevant(title: str, summary: str) -> bool:
