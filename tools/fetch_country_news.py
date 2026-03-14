@@ -1,5 +1,5 @@
 """
-Fetch country-specific AML news for 6 priority countries.
+Fetch country-specific AML news for priority jurisdictions worldwide.
 Returns top 5 most relevant articles per country, tagged with country name.
 Uses NewsAPI only. Top 5 articles per country, last 7 days.
 """
@@ -46,6 +46,50 @@ COUNTRY_QUERIES = {
         "UAE CBUAE Dubai money laundering enforcement",
         "UAE AML financial crime",
         "Dubai sanctions evasion",
+    ],
+    "Japan": [
+        "Japan money laundering financial crime enforcement",
+        "Japan JAFIC AML anti-money laundering",
+    ],
+    "Hong Kong": [
+        "Hong Kong money laundering JFIU enforcement",
+        "Hong Kong SFC HKMA AML financial crime",
+    ],
+    "Malaysia": [
+        "Malaysia money laundering BNM AML enforcement",
+        "Malaysia financial crime AMLA",
+    ],
+    "South Korea": [
+        "South Korea money laundering KoFIU AML enforcement",
+        "Korea financial crime anti-money laundering",
+    ],
+    "China": [
+        "China money laundering financial crime enforcement",
+        "China AML anti-money laundering PBC",
+    ],
+    "Indonesia": [
+        "Indonesia money laundering PPATK enforcement",
+        "Indonesia financial crime AML",
+    ],
+    "EU": [
+        "European Union AML enforcement AMLA money laundering",
+        "EU financial crime anti-money laundering directive",
+    ],
+    "Germany": [
+        "Germany money laundering AML BaFin enforcement",
+        "Germany financial crime Geldwäsche",
+    ],
+    "Canada": [
+        "Canada FINTRAC money laundering enforcement",
+        "Canada AML financial crime penalty",
+    ],
+    "South Africa": [
+        "South Africa money laundering FIC enforcement",
+        "South Africa AML financial crime FATF",
+    ],
+    "Nigeria": [
+        "Nigeria money laundering EFCC enforcement",
+        "Nigeria financial crime AML",
     ],
 }
 

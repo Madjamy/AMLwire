@@ -1,16 +1,18 @@
 """
 AMLWire.com -- Main Orchestrator
 Daily pipeline:
-  1. Global AML news (NewsAPI)
-  2. Tavily deep search -- full content, broad topic coverage
-  3. Country-specific news (AU, USA, UK, India, Singapore, UAE -- top 5 each, NewsAPI)
-  4. Drop articles with no publish date
-  5. Save all candidates to articles_staging (audit trail)
-  6. Deduplicate (within batch + against Supabase articles table)
-  7. AI analysis (Grok 4.1 Fast via OpenRouter)
-  8. Image generation per article (Gemini 2.5 Flash -> Supabase Storage)
-  9. Upload articles to Supabase articles table (final/published)
-  10. Generate + upload typology summaries
+  1.  Global AML news (NewsAPI)
+  2.  Tavily deep search -- full content, broad topic coverage
+  3.  Country-specific news (17 jurisdictions -- top 5 each, NewsAPI + Tavily)
+  4.  Regulatory RSS feeds (AUSTRAC, FCA, FinCEN, FATF, Egmont, Interpol, FSRBs, etc.)
+  5.  GDELT global news (catches regional sources missed by Tavily/NewsAPI)
+  6.  Drop articles with no publish date
+  7.  Save all candidates to articles_staging (audit trail)
+  8.  Deduplicate (within batch + against Supabase articles table)
+  9.  AI analysis -- filter, summarise, extract typology + modus operandi (with full scrape)
+  10. Curation -- country cap (USA/UK/AU/JP/SG/IN/UAE≤5, others≤2), quality rank, max 40
+  11. Upload articles to Supabase articles table (final/published)
+  12. Generate + upload typology summaries
 
 Usage:
     python main.py
@@ -62,7 +64,7 @@ def run_pipeline():
         tavily_articles = []
 
     # Step 3: Country-specific (top 5 per country via NewsAPI)
-    log.info("Step 3/10 -- Country fetch: AU, USA, UK, India, Singapore, UAE...")
+    log.info("Step 3/12 -- Country fetch: 17 jurisdictions...")
     try:
         from tools.fetch_country_news import fetch_country_articles
         country_articles = fetch_country_articles()
@@ -71,15 +73,42 @@ def run_pipeline():
         log.error(f"  Country fetch failed: {e}")
         country_articles = []
 
-    all_articles = newsapi_articles + tavily_articles + country_articles
+    # Step 4: Regulatory RSS feeds (AUSTRAC, FCA, FinCEN, FATF, Egmont, Interpol, FSRBs)
+    log.info("Step 4/12 -- Regulatory RSS feeds...")
+    try:
+        from tools.fetch_rss_feeds import fetch_rss_articles
+        rss_articles = fetch_rss_articles()
+        log.info(f"  RSS feeds: {len(rss_articles)} articles")
+    except Exception as e:
+        log.error(f"  RSS fetch failed: {e}")
+        rss_articles = []
+
+    # Step 5: GDELT global news (regional coverage)
+    log.info("Step 5/12 -- GDELT global news fetch...")
+    try:
+        from tools.fetch_gdelt import fetch_gdelt_articles
+        gdelt_articles = fetch_gdelt_articles()
+        log.info(f"  GDELT: {len(gdelt_articles)} articles")
+    except Exception as e:
+        log.error(f"  GDELT fetch failed: {e}")
+        gdelt_articles = []
+
+    # Capture per-source counts before any filtering (for stats logging)
+    _stats_newsapi = len(newsapi_articles)
+    _stats_tavily = len(tavily_articles)
+    _stats_country = len(country_articles)
+    _stats_rss = len(rss_articles)
+    _stats_gdelt = len(gdelt_articles)
+
+    all_articles = newsapi_articles + tavily_articles + country_articles + rss_articles + gdelt_articles
     log.info(f"  Combined total: {len(all_articles)} candidate articles")
 
     if not all_articles:
         log.warning("No articles fetched. Exiting.")
         return
 
-    # Step 4: Drop articles with no publish date
-    log.info("Step 4/10 -- Filtering articles with no publish date...")
+    # Step 6: Drop articles with no publish date
+    log.info("Step 6/12 -- Filtering articles with no publish date...")
     with_date = [a for a in all_articles if (a.get("published_at") or "").strip()]
     no_date = len(all_articles) - len(with_date)
     if no_date:
@@ -91,8 +120,8 @@ def run_pipeline():
         log.warning("No articles with publish dates. Exiting.")
         return
 
-    # Step 5: Save all candidates to staging table (audit trail)
-    log.info("Step 5/10 -- Saving candidates to articles_staging...")
+    # Step 7: Save all candidates to staging table (audit trail)
+    log.info("Step 7/12 -- Saving candidates to articles_staging...")
     try:
         from tools.upload_supabase import upload_staging
         staged = upload_staging(all_articles)
@@ -100,8 +129,8 @@ def run_pipeline():
     except Exception as e:
         log.error(f"  Staging upload failed: {e}")
 
-    # Step 6: Deduplicate
-    log.info("Step 6/10 -- Deduplicating against Supabase articles table...")
+    # Step 8: Deduplicate
+    log.info("Step 8/12 -- Deduplicating against Supabase articles table...")
     try:
         from tools.deduplicate import deduplicate
         clean_articles = deduplicate(all_articles)
@@ -109,13 +138,14 @@ def run_pipeline():
     except Exception as e:
         log.error(f"  Deduplication failed: {e}")
         clean_articles = all_articles
+    _stats_after_dedup = len(clean_articles)
 
     if not clean_articles:
         log.info("All articles already in Supabase. Nothing new to process.")
         return
 
-    # Step 7: AI Analysis
-    log.info(f"Step 7/10 -- AI analysis of {len(clean_articles)} articles (Grok 4.1 Fast)...")
+    # Step 9: AI Analysis (with full article scraping)
+    log.info(f"Step 9/12 -- AI analysis of {len(clean_articles)} articles (Grok 4.1 Fast + full scrape)...")
     try:
         from tools.analyze_articles import analyze_articles
         analyzed = analyze_articles(clean_articles)
@@ -159,7 +189,6 @@ def run_pipeline():
             except Exception:
                 fresh.append(article)
         else:
-            # AI returned no date — skip it
             log.info(f"  Skipping (no AI date): {article.get('title', '')[:60]}")
     if len(fresh) < len(analyzed):
         log.info(f"  Dropped {len(analyzed) - len(fresh)} articles (old or no date)")
@@ -169,28 +198,22 @@ def run_pipeline():
         log.warning("No fresh articles to upload.")
         return
 
-    # Step 8: Image generation
-    log.info(f"Step 8/10 -- Generating cover images for {len(analyzed)} articles...")
+    # Step 10: Curation — country cap + quality ranking
+    log.info(f"Step 10/12 -- Curating {len(analyzed)} articles (country cap + quality rank)...")
     try:
-        from tools.generate_image import generate_image
-        for article in analyzed:
-            try:
-                article["image_url"] = generate_image(
-                    title=article.get("title", ""),
-                    summary=article.get("summary", ""),
-                    region=article.get("region", ""),
-                    typology=article.get("aml_typology", ""),
-                )
-            except Exception as e:
-                log.warning(f"  Image failed: {e}")
-                article["image_url"] = None
+        from tools.curate_articles import curate_articles
+        analyzed = curate_articles(analyzed)
+        log.info(f"  {len(analyzed)} articles selected after curation")
     except Exception as e:
-        log.error(f"  Image generation step failed: {e}")
-        for article in analyzed:
-            article.setdefault("image_url", None)
+        log.error(f"  Curation failed (uploading all): {e}")
 
-    # Step 9: Upload articles to final table
-    log.info("Step 9/10 -- Uploading articles to Supabase articles table...")
+    if not analyzed:
+        log.warning("No articles after curation. Exiting.")
+        return
+
+    # Step 11: Upload articles to final table
+    log.info("Step 11/12 -- Uploading articles to Supabase articles table...")
+    _stats_published = len(analyzed)
     try:
         from tools.upload_supabase import upload_articles
         uploaded = upload_articles(analyzed)
@@ -198,8 +221,8 @@ def run_pipeline():
     except Exception as e:
         log.error(f"  Article upload failed: {e}")
 
-    # Step 10: Typology summaries
-    log.info("Step 10/10 -- Generating typology summaries...")
+    # Step 12: Typology summaries
+    log.info("Step 12/12 -- Generating typology summaries (based on curated set)...")
     try:
         from tools.generate_typology_summary import generate_typology_summaries
         from tools.upload_supabase import upload_typology_summaries
@@ -211,6 +234,22 @@ def run_pipeline():
             log.info("  No typology summaries generated")
     except Exception as e:
         log.error(f"  Typology summary step failed: {e}")
+
+    # Log pipeline stats to Supabase for dashboard
+    try:
+        from tools.log_pipeline_stats import log_pipeline_stats
+        log_pipeline_stats(
+            newsapi_count=_stats_newsapi,
+            tavily_count=_stats_tavily,
+            country_news_count=_stats_country,
+            rss_count=_stats_rss,
+            gdelt_count=_stats_gdelt,
+            total_fetched=len(all_articles),
+            total_after_dedup=_stats_after_dedup,
+            total_published=_stats_published,
+        )
+    except Exception as e:
+        log.error(f"  Stats logging failed: {e}")
 
     log.info("=" * 65)
     log.info(f"Pipeline complete -- {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")

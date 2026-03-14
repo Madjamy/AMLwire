@@ -77,10 +77,63 @@ def upload_staging(articles: list[dict]) -> int:
     return saved
 
 
+def find_related_articles(article_id: str, article: dict, client) -> list[str]:
+    """
+    Query Supabase for articles related to the given article by typology and enforcement authority.
+    Returns a list of up to 5 related article UUIDs, excluding the article itself.
+    """
+    seen: set[str] = set()
+    related: list[str] = []
+
+    typology = article.get("aml_typology")
+    authority = article.get("enforcement_authority")
+
+    # Match by typology (most recent 5, skip generic "AML News")
+    if typology and typology not in ("AML News",):
+        try:
+            resp = (
+                client.table("articles")
+                .select("id")
+                .eq("aml_typology", typology)
+                .neq("id", article_id)
+                .order("published_at", desc=True)
+                .limit(5)
+                .execute()
+            )
+            for r in (resp.data or []):
+                if r["id"] not in seen:
+                    seen.add(r["id"])
+                    related.append(r["id"])
+        except Exception:
+            pass
+
+    # Match by enforcement authority (most recent 3, cap at 5 total)
+    if authority and len(related) < 5:
+        try:
+            resp = (
+                client.table("articles")
+                .select("id")
+                .eq("enforcement_authority", authority)
+                .neq("id", article_id)
+                .order("published_at", desc=True)
+                .limit(3)
+                .execute()
+            )
+            for r in (resp.data or []):
+                if r["id"] not in seen and len(related) < 5:
+                    seen.add(r["id"])
+                    related.append(r["id"])
+        except Exception:
+            pass
+
+    return related[:5]
+
+
 def upload_articles(articles: list[dict]) -> int:
     """
     Upsert analyzed articles into Supabase articles table.
     Conflict key: source_url (unique).
+    After each upsert, populates related_article_ids by querying matching typology/authority.
     Returns count of successfully uploaded articles.
     """
     if not articles:
@@ -98,9 +151,10 @@ def upload_articles(articles: list[dict]) -> int:
 
         row = {
             "title": article.get("title", ""),
+            "amlwire_title": article.get("amlwire_title") or None,
             "summary": article.get("summary", ""),
+            "modus_operandi": article.get("modus_operandi") or None,
             "raw_snippet": article.get("raw_snippet", ""),
-            "image_url": article.get("image_url"),
             "source_url": source_url,
             "source_name": article.get("source_name") or article.get("source", ""),
             "category": article.get("category", "news"),
@@ -110,12 +164,35 @@ def upload_articles(articles: list[dict]) -> int:
             "tags": article.get("tags", []),
             "published_at": _parse_published_at(article.get("published_date", "")),
             "fetched_at": fetched_at,
+            "enforcement_authority": article.get("enforcement_authority") or None,
+            "financial_amount": article.get("financial_amount") or None,
+            "key_entities": article.get("key_entities") or [],
+            "action_required": article.get("action_required") or False,
+            "publication_type": article.get("publication_type") or None,
+            "related_article_ids": [],
         }
 
         try:
-            client.table("articles").upsert(row, on_conflict="source_url").execute()
+            resp = client.table("articles").upsert(row, on_conflict="source_url").execute()
             uploaded += 1
-            print(f"[Upload] Saved: {article.get('title', '')[:70]}")
+
+            # Fetch the article's UUID so we can query related articles and update the link
+            id_resp = (
+                client.table("articles")
+                .select("id")
+                .eq("source_url", source_url)
+                .limit(1)
+                .execute()
+            )
+            if id_resp.data:
+                article_id = id_resp.data[0]["id"]
+                related = find_related_articles(article_id, article, client)
+                if related:
+                    client.table("articles").update(
+                        {"related_article_ids": related}
+                    ).eq("id", article_id).execute()
+
+            print(f"[Upload] Saved: {article.get('amlwire_title') or article.get('title', '')[:70]}")
         except Exception as e:
             print(f"[Upload] Error saving '{source_url}': {e}")
 

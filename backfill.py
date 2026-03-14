@@ -342,21 +342,6 @@ def run_backfill(from_date: str, to_date: str):
         log.warning("No articles passed date gate.")
         return
 
-    # Images
-    log.info("Generating cover images...")
-    from tools.generate_image import generate_image
-    for article in analyzed:
-        try:
-            article["image_url"] = generate_image(
-                title=article.get("title", ""),
-                summary=article.get("summary", ""),
-                region=article.get("region", ""),
-                typology=article.get("aml_typology", ""),
-            )
-        except Exception as e:
-            log.warning(f"  Image failed: {e}")
-            article["image_url"] = None
-
     # Upload articles
     log.info("Uploading articles to Supabase...")
     from tools.upload_supabase import upload_articles

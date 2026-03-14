@@ -74,9 +74,19 @@ TAVILY_QUERIES = [
     "organized crime financial crime money laundering",
     "criminal network laundering proceeds",
 
-    # Cybercrime financial
+    # Cybercrime financial — general
     "cybercrime fraud money laundering proceeds",
     "cyber fraud financial crime enforcement",
+
+    # Cybercrime — specific high-value methods
+    "ransomware payment cryptocurrency laundering enforcement",
+    "BEC business email compromise money laundering proceeds",
+    "investment fraud scam money laundering arrest conviction",
+    "pig butchering romance scam crypto fraud laundering",
+    "cyber heist cryptocurrency theft laundering enforcement",
+    "online fraud money mule proceeds laundering",
+    "deepfake fraud financial crime enforcement action",
+    "SIM swap fraud money laundering bank enforcement",
 
     # FATF and regulatory
     "FATF evaluation AML deficiency",
@@ -144,7 +154,133 @@ COUNTRY_QUERIES = {
         "UAE Dubai money laundering AML enforcement CBUAE",
         "UAE financial crime sanctions evasion 2026",
     ],
+    "Japan": [
+        "Japan financial crime money laundering JAFIC enforcement",
+        "Japan AML anti-money laundering enforcement action 2026",
+    ],
+    "Hong Kong": [
+        "Hong Kong money laundering JFIU enforcement action",
+        "Hong Kong financial crime AML SFC HKMA 2026",
+    ],
+    "Malaysia": [
+        "Malaysia money laundering AML enforcement BNM",
+        "Malaysia financial crime AMLA enforcement action 2026",
+    ],
+    "South Korea": [
+        "South Korea money laundering financial crime enforcement KoFIU",
+        "Korea AML financial crime enforcement action 2026",
+    ],
+    "China": [
+        "China money laundering financial crime enforcement PBC",
+        "China AML anti-money laundering enforcement action 2026",
+    ],
+    "Indonesia": [
+        "Indonesia money laundering PPATK financial crime enforcement",
+        "Indonesia AML financial crime enforcement action 2026",
+    ],
+    "EU": [
+        "European Union AML enforcement action AMLA 2026",
+        "EU money laundering financial crime directive enforcement",
+    ],
+    "Germany": [
+        "Germany money laundering AML enforcement BaFin",
+        "Germany financial crime Geldwäsche enforcement 2026",
+    ],
+    "Canada": [
+        "FINTRAC Canada money laundering enforcement penalty",
+        "Canada financial crime AML enforcement action 2026",
+    ],
+    "New Zealand": [
+        "New Zealand money laundering AML enforcement FIU",
+        "New Zealand financial crime AML action 2026",
+    ],
+    "South Africa": [
+        "South Africa money laundering FIC enforcement action",
+        "South Africa AML financial crime FATF 2026",
+    ],
+    "Nigeria": [
+        "Nigeria money laundering EFCC enforcement action",
+        "Nigeria financial crime AML enforcement 2026",
+    ],
 }
+
+# ─── Regulatory direct queries ────────────────────────────────────────────────
+# Uses Tavily's include_domains to search WITHIN the regulatory body's own site,
+# fetching primary-source content (enforcement notices, guidance, typology reports).
+# days=90 because regulatory publications are less frequent than daily news.
+REGULATORY_DOMAIN_QUERIES = [
+    # AUSTRAC (Australia)
+    {
+        "query": "enforcement action penalty notice money laundering AML",
+        "domains": ["austrac.gov.au"],
+        "country": "Australia",
+    },
+    {
+        "query": "industry guidance advisory financial crime typology",
+        "domains": ["austrac.gov.au"],
+        "country": "Australia",
+    },
+    # FATF
+    {
+        "query": "mutual evaluation report typology guidance grey list",
+        "domains": ["fatf-gafi.org"],
+        "country": None,
+    },
+    # MAS Singapore
+    {
+        "query": "enforcement action AML penalty notice financial crime",
+        "domains": ["mas.gov.sg"],
+        "country": "Singapore",
+    },
+    # Egmont Group
+    {
+        "query": "financial intelligence unit cooperation typology",
+        "domains": ["egmontgroup.org"],
+        "country": None,
+    },
+    # APG Asia-Pacific Group
+    {
+        "query": "mutual evaluation typology AML report",
+        "domains": ["apgml.org"],
+        "country": None,
+    },
+    # HKMA
+    {
+        "query": "AML enforcement penalty guidance money laundering",
+        "domains": ["hkma.gov.hk"],
+        "country": "Hong Kong",
+    },
+    # ED India (Enforcement Directorate)
+    {
+        "query": "money laundering enforcement arrest attachment PMLA",
+        "domains": ["enforcementdirectorate.gov.in"],
+        "country": "India",
+    },
+    # MONEYVAL (Council of Europe)
+    {
+        "query": "mutual evaluation AML money laundering report",
+        "domains": ["coe.int"],
+        "country": None,
+    },
+    # FinCEN (US) — in addition to RSS
+    {
+        "query": "advisory alert guidance financial crime AML",
+        "domains": ["fincen.gov"],
+        "country": "United States",
+    },
+    # FINTRAC (Canada)
+    {
+        "query": "enforcement action penalty notice AML money laundering",
+        "domains": ["fintrac-canafe.gc.ca"],
+        "country": "Canada",
+    },
+    # BNM Malaysia
+    {
+        "query": "enforcement action AML penalty financial crime",
+        "domains": ["bnm.gov.my"],
+        "country": "Malaysia",
+    },
+]
 
 TOPIC_KEYWORDS = [
     "money laundering", "aml", "anti-money laundering", "sanctions", "tax evasion",
@@ -166,14 +302,73 @@ TOPIC_KEYWORDS = [
 _RESOURCE_PATH_PATTERNS = re.compile(
     r"/(?:topics|resources|guidance|about|faq|faqs|explainer|learn|knowledge"
     r"|library|education|training|support|help|whitepaper|what-is|overview"
-    r"|definitions|glossary|careers|contact|index-|publications(?:/index)?)(?:/|$)",
+    r"|definitions|glossary|careers|contact|index-|publications(?:/index)?"
+    r"|expertise|programmes?|tools|toolkits?|datasets?|standards|frameworks?"
+    r"|legislation|mandates?|our-work|what-we-do|priorities|strategy"
+    r"|technical-assistance|capacity-building"
+    r"|virtual-library|abstracts|techniques/T\d"  # academic libs, AMLTRIX technique pages
+    r"|press_releases?|announce/detail"           # press release wires
+    r"|online_features)(?:/|$)",
+    re.IGNORECASE,
+)
+
+# Domains that consistently produce non-AML content or noise
+_BLOCKED_DOMAINS = {
+    "researchgate.net",       # academic papers
+    "framework.amltrix.com",  # reference framework
+    "ojp.gov",                # US justice academic library
+    "telecomasia.net",        # telecom trade news
+    "hollywoodreporter.com",  # entertainment
+    "sputnikglobe.com",       # Russian state media, geopolitical only
+    "lelezard.com",           # press release aggregator
+    "wfxg.com",               # local TV / press releases
+    "markets.ft.com",         # FT press release wire
+    "maritime-executive.com", # maritime ops, not financial crime
+    "globenewswire.com",      # press release wire (investor alerts etc.)
+    "prnewswire.com",         # press release wire
+    "businesswire.com",       # press release wire
+    "accesswire.com",         # press release wire
+}
+
+
+# Title patterns that indicate evergreen/educational content, not a news event
+# Matches at the START of the title, or after a short prefix like "PEPs: " or "AML: "
+_EVERGREEN_TITLE_PATTERNS = re.compile(
+    r"(?:^|^[\w\s\(\)]{1,20}:\s*)"
+    r"(?:understanding\s|explaining\s|what\s+is\s|what\s+are\s|how\s+to\s|"
+    r"a\s+guide\s+to|guide\s+to\s|introduction\s+to\s|an\s+introduction|"
+    r"the\s+role\s+of\s|the\s+importance\s+of\s|"
+    r"how\s+does\s|all\s+you\s+need\s+to\s+know|overview\s+of\s)",
+    re.IGNORECASE,
+)
+
+# Separate pattern for "Why X demand/matter/require" style titles (any number of words before verb)
+_EVERGREEN_WHY_PATTERN = re.compile(
+    r"^why\s+.{5,60}?\s+(?:matter|demand|require|need|pose|present)\b",
     re.IGNORECASE,
 )
 
 
 def _is_resource_url(url: str) -> bool:
-    """Return True if the URL looks like a reference/resource page, not a news article."""
-    return bool(_RESOURCE_PATH_PATTERNS.search(url))
+    """Return True if the URL is a reference/resource page or blocked domain."""
+    if _RESOURCE_PATH_PATTERNS.search(url):
+        return True
+    # Extract domain (strip www.)
+    m = re.search(r"https?://(?:www\.)?([^/]+)", url)
+    if m:
+        domain = m.group(1).lower()
+        if domain in _BLOCKED_DOMAINS:
+            return True
+        # Block any subdomain of a blocked domain
+        if any(domain.endswith("." + bd) for bd in _BLOCKED_DOMAINS):
+            return True
+    return False
+
+
+def _is_evergreen_title(title: str) -> bool:
+    """Return True if the title looks like an educational/evergreen explainer, not a news event."""
+    t = title.strip()
+    return bool(_EVERGREEN_TITLE_PATTERNS.match(t)) or bool(_EVERGREEN_WHY_PATTERN.match(t))
 
 
 def _is_relevant(text: str) -> bool:
@@ -183,9 +378,8 @@ def _is_relevant(text: str) -> bool:
 
 def _extract_date(url: str, content: str) -> str:
     """
-    Extract a publish date for Tavily articles (which don't return published_date).
+    Fallback date extraction when Tavily doesn't return published_date.
     Priority: URL path date → date in content text → today's date.
-    Tavily's days=7 param already guarantees recency, so today is a safe fallback.
     Returns ISO date string YYYY-MM-DD.
     """
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -247,6 +441,64 @@ def _extract_date(url: str, content: str) -> str:
     return today
 
 
+def _search_regulatory(query: str, domains: list[str], days: int = 90, country_tag: str = "") -> list[dict]:
+    """
+    Search within specific regulatory domains using Tavily's include_domains filter.
+    Returns primary-source content direct from the regulatory body's website.
+    """
+    if not TAVILY_API_KEY:
+        return []
+    try:
+        payload = {
+            "api_key": TAVILY_API_KEY,
+            "query": query,
+            "search_depth": "basic",
+            "max_results": 5,
+            "days": days,
+            "include_domains": domains,
+            "include_raw_content": False,
+            "include_answer": False,
+        }
+        resp = requests.post(TAVILY_URL, json=payload, timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+
+        results = []
+        for item in data.get("results", []):
+            url = item.get("url", "")
+            title = item.get("title", "")
+            content = item.get("content", "")
+
+            if not url or not title:
+                continue
+
+            tavily_date = item.get("published_date", "")
+            if tavily_date:
+                try:
+                    from email.utils import parsedate_to_datetime
+                    published = parsedate_to_datetime(tavily_date).strftime("%Y-%m-%d")
+                except Exception:
+                    published = _extract_date(url, content)
+            else:
+                published = _extract_date(url, content)
+
+            results.append({
+                "title": title,
+                "url": url,
+                "source": domains[0],
+                "published_at": published,
+                "description": content[:500] if content else "",
+                "content": content,
+                "api_source": "tavily_regulatory",
+                **({"country": country_tag} if country_tag else {}),
+            })
+        return results
+
+    except Exception as e:
+        print(f"[Tavily Regulatory] Error on '{query}' ({domains}): {e}")
+        return []
+
+
 def _search(query: str, days: int = 7, country_tag: str = "") -> list[dict]:
     """Execute a single Tavily search and return standardised article dicts."""
     if not TAVILY_API_KEY:
@@ -279,12 +531,25 @@ def _search(query: str, days: int = 7, country_tag: str = "") -> list[dict]:
             if _is_resource_url(url):
                 continue
 
+            # Skip evergreen educational/explainer articles by title pattern
+            if _is_evergreen_title(title):
+                continue
+
             text = (title + " " + content).lower()
             if not _is_relevant(text):
                 continue
 
-            # Tavily doesn't return published_date — extract from URL/content or use today
-            published = _extract_date(url, content)
+            # Use Tavily's published_date if present (RFC format: "Fri, 06 Mar 2026 09:30:06 GMT")
+            # Fall back to URL/content extraction only if Tavily doesn't provide one
+            tavily_date = item.get("published_date", "")
+            if tavily_date:
+                try:
+                    from email.utils import parsedate_to_datetime
+                    published = parsedate_to_datetime(tavily_date).strftime("%Y-%m-%d")
+                except Exception:
+                    published = _extract_date(url, content)
+            else:
+                published = _extract_date(url, content)
 
             results.append({
                 "title": title,
@@ -350,6 +615,21 @@ def fetch_articles() -> list[dict]:
         print(f"[Tavily] {country}: {len(country_articles)} articles")
 
     print(f"[Tavily] Total fetched: {len(results)} articles ({country_total} country-specific)")
+
+    # Regulatory direct queries — fetches content FROM regulatory body websites
+    reg_start = len(results)
+    for spec in REGULATORY_DOMAIN_QUERIES:
+        for article in _search_regulatory(
+            query=spec["query"],
+            domains=spec["domains"],
+            country_tag=spec.get("country") or "",
+        ):
+            if article["url"] not in seen_urls:
+                seen_urls.add(article["url"])
+                results.append(article)
+    reg_count = len(results) - reg_start
+    print(f"[Tavily] Regulatory direct: {reg_count} articles from regulatory websites")
+
     return results
 
 
