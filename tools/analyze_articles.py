@@ -286,8 +286,9 @@ PUBLICATION TYPE RULE
 DATE VERIFICATION RULE (CRITICAL)
 - Read the article content carefully for date signals (e.g. "on Monday", "last week", "in February 2026", "announced yesterday")
 - If the Provided Published date appears to be today's fetch date but the article content clearly describes an older event, correct the published_date using the date from article content
-- If you cannot determine the actual publish date from content, use the Provided Published date
+- ⚠️ If the Provided Published Date is marked with a WARNING (fetch date, not real publication date): you MUST find a date in the article content. If the content does not clearly confirm the article is from within the last 14 days, EXCLUDE it — do NOT assume it is recent just because the fetch date is today.
 - If content signals the article is from more than 14 days before today's date, EXCLUDE it entirely
+- Regulatory documents (mutual evaluations, FATF reports, AUSTRAC guidance) published more than 14 days ago must be EXCLUDED — even if the source URL is authoritative. Only include regulatory guidance published within the last 14 days.
 - For published_date in output: format as DD-MM-YYYY
 
 MODUS OPERANDI RULE
@@ -433,7 +434,11 @@ def _build_user_prompt(articles: list[dict], current_date: str) -> str:
         lines.append(f"Source: {a.get('source', '')}")
         lines.append(f"URL: {a.get('url', '')}")
         lines.append(f"Country (if known): {a.get('country', '')}")
-        lines.append(f"Provided Published Date: {a.get('published_at', '')} (verify from content — correct if clearly wrong)")
+        pub_date = a.get('published_at', '')
+        date_warning = ""
+        if pub_date == current_date:
+            date_warning = " ⚠️ WARNING: No publication date was found by the fetcher — this date is the FETCH DATE, not the real publication date. You MUST find the actual date from the article content. If you cannot confirm the article is recent (within 14 days), EXCLUDE it."
+        lines.append(f"Provided Published Date: {pub_date}{date_warning}")
 
         # Use scraped full text if available, else fall back to Tavily content/description
         scraped = a.get("_scraped_text", "")
