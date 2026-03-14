@@ -22,40 +22,30 @@ REQUEST_TIMEOUT = 15
 # Each query targets a specific typology/theme
 GDELT_QUERIES = [
     # Core AML enforcement
-    '"money laundering" arrest OR convicted OR fined OR enforcement',
-    '"AML" "enforcement action" OR "compliance failure" OR "suspicious transaction"',
-    '"anti-money laundering" penalty OR sanction OR investigation',
+    '"money laundering" arrest',
+    '"money laundering" convicted',
+    '"money laundering" enforcement fine',
+    '"anti-money laundering" penalty investigation',
 
     # Crypto financial crime
-    '"crypto" "money laundering" OR "ransomware" OR "pig butchering" enforcement',
-    '"cryptocurrency" fraud OR laundering arrest OR seizure',
+    '"crypto" "money laundering" enforcement',
+    '"pig butchering" fraud arrest',
 
-    # Regional coverage — South Asia / Southeast Asia
-    '"money laundering" India OR Pakistan OR Bangladesh OR Sri Lanka',
-    '"financial crime" Singapore OR Malaysia OR Indonesia OR Philippines OR Vietnam',
-    '"AML" Japan OR "South Korea" OR "Hong Kong" OR Taiwan',
+    # Regional — South Asia / Southeast Asia
+    '"money laundering" India arrest',
+    '"money laundering" Singapore Malaysia enforcement',
 
     # Africa / Middle East
-    '"money laundering" Nigeria OR "South Africa" OR Kenya OR Ghana OR Egypt',
-    '"financial crime" UAE OR "Saudi Arabia" OR Qatar OR Kuwait',
+    '"money laundering" Nigeria enforcement',
+    '"money laundering" UAE enforcement',
 
-    # Emerging crime
-    '"pig butchering" OR "romance scam" crypto fraud',
-    '"business email compromise" OR "BEC fraud" wire transfer',
-    '"hawala" OR "informal value transfer" money laundering',
-
-    # Regulatory actions
-    'FATF "grey list" OR "mutual evaluation" AML',
-    '"FinCEN" OR "AUSTRAC" OR "FCA" enforcement penalty fine',
-    '"Interpol" OR "Europol" financial crime arrest seizure',
-
-    # TBML and trade crime
-    '"trade-based money laundering" OR "invoice fraud" customs',
-    '"shell company" beneficial owner fraud prosecution',
+    # Regulatory
+    'FATF "grey list" AML',
+    'AUSTRAC enforcement penalty',
 
     # Sanctions
-    '"sanctions evasion" OR "sanctions violation" enforcement',
-    '"OFAC" sanctions designation OR violation',
+    '"sanctions evasion" enforcement',
+    '"OFAC" sanctions designation',
 ]
 
 
@@ -81,7 +71,10 @@ def _gdelt_search(query: str, lookback_days: int) -> list[dict]:
         resp = requests.get(GDELT_API, params=params, timeout=REQUEST_TIMEOUT)
         if resp.status_code != 200:
             return []
-        data = resp.json()
+        try:
+            data = resp.json()
+        except ValueError:
+            return []  # GDELT returned non-JSON (rate limit page, maintenance, etc.)
         articles_raw = data.get("articles", []) or []
 
         results = []

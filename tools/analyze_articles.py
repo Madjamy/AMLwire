@@ -225,21 +225,25 @@ TAGS RULE
 Generate 4-7 short lowercase tags. Include: the typology slug, jurisdiction(s), financial sector involved, and any named entities or programmes (e.g. ["pig-butchering", "crypto", "myanmar", "scam-compound", "fatf", "australia"]).
 
 AMLWIRE HEADLINE RULE
-Generate an ORIGINAL AMLWire headline for the amlwire_title field. DO NOT copy the source headline.
+Generate an ORIGINAL AMLWire headline for the amlwire_title field.
+CRITICAL: Base the headline on the FULL ARTICLE TEXT (scraped body), NOT on rephrasing the Source Headline.
+Read the article body to extract specific names of people/entities, exact dollar amounts with currency, named authorities, and jurisdictions — then construct the headline from those facts.
+DO NOT paraphrase or re-order the words of the Source Headline. The headline must come from content in the article body.
 Format: [Actor/Authority] [Strong Verb] [Entity/Subject] [Amount if known] [Jurisdiction/Context]
 Strong verbs: Charges, Sentences, Fines, Seizes, Freezes, Dismantles, Exposes, Flags, Bans, Warns, Uncovers, Convicts, Arrests, Penalises, Revokes, Suspends
 Rules:
-- Name the specific authority or actor and the specific entity/person involved
-- Include the amount or scale if known (with currency)
+- Name the specific authority or actor and the specific entity/person involved (from article body)
+- Include the exact amount or scale with currency if mentioned in the article body
 - Keep under 120 characters. Active voice only.
 - Do NOT use hedge words ("allegedly", "reportedly") in the headline
-Good examples:
+Good examples (all derived from article body detail, not headline rephrasing):
   "DOJ Charges Miami Developer with USD 45M Real Estate Money Laundering"
   "AUSTRAC Fines Crown Resorts AUD 450M for Systemic AML Control Failures"
   "Europol Dismantles Crypto Mixer Linked to EUR 100M in Drug Proceeds"
 Bad examples:
   "Man Charged With Money Laundering" (too vague — no entity, no amount)
   "Regulators Take Action" (no specifics)
+  Any headline that just rewords or reorders the Source Headline (this is the most common failure — avoid it)
 
 AMLWIRE WRITING STYLE
 Voice: Third-person, objective, authoritative. No editorial opinion.

@@ -85,15 +85,20 @@ TAGS (4-7 lowercase tags):
 Include: typology slug, jurisdiction(s), financial sector, named entities/programmes.
 
 AMLWIRE HEADLINE RULE
-Generate an ORIGINAL AMLWire headline for the amlwire_title field. DO NOT copy the source headline.
+Generate an ORIGINAL AMLWire headline for the amlwire_title field.
+CRITICAL: Base the headline on the FULL ARTICLE TEXT provided, NOT on rephrasing the source title.
+Read the article body to extract specific names of people/entities, exact dollar amounts with currency, named authorities, and jurisdictions — then construct the headline from those facts.
+DO NOT paraphrase or re-order the words of the source title. The headline must come from content in the article body.
 Format: [Actor/Authority] [Strong Verb] [Entity/Subject] [Amount if known] [Jurisdiction/Context]
 Strong verbs: Charges, Sentences, Fines, Seizes, Freezes, Dismantles, Exposes, Flags, Bans, Warns, Uncovers, Convicts, Arrests, Penalises, Revokes, Suspends
 Rules:
-- Name the specific authority or actor and the specific entity/person involved
-- Include the amount or scale if known (with currency). Keep under 120 characters. Active voice only.
+- Name the specific authority/actor and specific entity/person (from article body)
+- Include the exact amount or scale with currency if mentioned in the article body
+- Keep under 120 characters. Active voice only.
 - Do NOT use hedge words ("allegedly", "reportedly") in the headline.
 Good: "DOJ Charges Miami Developer with USD 45M Real Estate Money Laundering"
 Bad: "Man Charged With Money Laundering" (too vague)
+Bad: Any headline that just rewords or reorders the source title (most common failure — avoid it)
 
 AMLWIRE WRITING STYLE
 Voice: Third-person, objective, authoritative. No editorial opinion.
