@@ -113,7 +113,7 @@ def _gdelt_search(query: str, lookback_days: int) -> list[dict]:
                 "published_at": published,
                 "description":  "",     # GDELT doesn't return snippets in artlist mode
                 "content":      "",     # Will be scraped by analyze_articles.py
-                "fetch_source": "gdelt",
+                "api_source": "gdelt",
             })
         return results
 
