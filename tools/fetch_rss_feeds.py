@@ -1,6 +1,7 @@
 """
 Fetch AML/financial crime news from regulatory and authoritative RSS feeds.
-Covers: FATF, AUSTRAC, FinCEN, FCA, Egmont Group, Interpol, FSRBs, major law enforcement.
+Covers: FATF, AUSTRAC, FinCEN, FCA, Interpol, major law enforcement,
+EIN Presswire topic/region feeds, and specialist AML publications.
 Returns list of raw article dicts compatible with the main pipeline.
 Free — no API key required.
 """
@@ -16,7 +17,7 @@ LOOKBACK_DAYS = 30
 
 # ─── Feed Registry ────────────────────────────────────────────────────────────
 # Format: (name, url, country, region)
-# URLs verified working. Google News RSS used for regulators without direct RSS.
+# URLs verified working. All feeds are free with no commercial use restrictions.
 RSS_FEEDS = [
 
     # ── Direct RSS feeds — primary source content from the regulatory body itself ──
@@ -36,8 +37,8 @@ RSS_FEEDS = [
      "https://www.fincen.gov/news/rss.xml",
      "United States", "Americas"),
 
-    ("SEC Enforcement",
-     "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&type=&dateb=&owner=include&count=40&search_text=&action=getcompany",
+    ("SEC Press",
+     "https://www.sec.gov/news/pressreleases.rss",
      "United States", "Americas"),
 
     ("Europol",
@@ -69,6 +70,21 @@ RSS_FEEDS = [
     ("FATF News",
      "https://www.fatf-gafi.org/en/publications/fatfrecommendations/rss.xml",
      "International", "Global"),
+
+    # ── Additional specialist publications (verified working) ────────────────
+    ("MoneyLaunderingNews",
+     "https://www.moneylaunderingnews.com/feed/",
+     "International", "Global"),
+
+    ("Financial Crime Academy",
+     "https://financialcrimeacademy.org/feed/",
+     "International", "Global"),
+
+    # ── Australian news ────────────────────────────────────────────────────
+    # AUSTRAC and CDPP don't offer RSS — covered via NewsAPI + Tavily queries
+    ("ABC News Crime AU",
+     "https://www.abc.net.au/news/feed/2942460/rss.xml",
+     "Australia", "Asia-Pacific"),
 ]
 
 # AML-relevant keywords — article must contain at least one to be included.

@@ -200,15 +200,15 @@ Searches within specific regulatory websites using Tavily's `include_domains`:
 - **Lookback**: 30 days (regulatory publications are less frequent)
 - **Date Handling**: Dateless articles are rejected (not assumed recent)
 
-**12 Feeds**:
+**14 Feeds** (12 regulatory/law enforcement + 2 specialist publications):
 
-| Regulator | Feed URL | Country | Region |
-|-----------|----------|---------|--------|
+| Source | Feed URL | Country | Region |
+|--------|----------|---------|--------|
 | FCA | fca.org.uk/news/rss.xml | UK | Europe |
 | DOJ | justice.gov/news/rss | USA | Americas |
 | OFAC | ofac.treasury.gov/rss.xml | USA | Americas |
 | FinCEN | fincen.gov/news/rss.xml | USA | Americas |
-| SEC Enforcement | sec.gov EDGAR feed | USA | Americas |
+| SEC Press | sec.gov/news/pressreleases.rss | USA | Americas |
 | Europol | europol.europa.eu/newsroom/rss | International | Europe |
 | Interpol | interpol.int/en/News-and-Events/News/rss | International | Global |
 | GFI | gfintegrity.org/feed/ | International | Global |
@@ -216,6 +216,10 @@ Searches within specific regulatory websites using Tavily's `include_domains`:
 | NCA UK | nationalcrimeagency.gov.uk/.../rss | UK | Europe |
 | ACAMS | acams.org/.../rss | International | Global |
 | FATF News | fatf-gafi.org/.../rss.xml | International | Global |
+| MoneyLaunderingNews | moneylaunderingnews.com/feed/ | International | Global |
+| Financial Crime Academy | financialcrimeacademy.org/feed/ | International | Global |
+
+**Note**: EIN Presswire feeds (moneylaundering.einnews.com) were evaluated but blocked by anti-bot verification. HKMA, US Treasury, FINRA, and Cifas RSS URLs returned 404/503 — these regulators don't maintain public RSS feeds.
 
 **AML Keyword Filter**: 55+ keywords must appear in title/summary (money laundering, aml, sanctions, fraud, crypto, fatf, enforcement, typology, etc.)
 
@@ -455,20 +459,70 @@ Output saved to `typology_summaries` table.
 | USA, UK, Australia, Japan, Singapore, India, UAE | 5 each |
 | All other countries | 2 each |
 
-### Quality Ranking
+### Quality Scoring Model (0-100)
 
-Articles sorted by quality score before applying caps:
+Each article is scored using 4 tiers. The `quality_score` is stored in Supabase for frontend feed ranking.
 
-| Condition | Points |
-|-----------|--------|
-| HIGH_VALUE_TYPOLOGY (18 typologies including crypto, TBML, hawala, trafficking, etc.) | +10 |
-| Other specific typology | +5 |
-| LOW_VALUE_TYPOLOGY (AML News, AML compliance failure) | +0 |
-| Modus operandi > 80 characters | +3 |
+**Tier 1 — Content Quality (0-40)**:
+
+| Signal | Points |
+|--------|--------|
+| publication_type: enforcement_action | +20 |
+| publication_type: regulatory_guidance | +15 |
+| publication_type: typology_study | +10 |
+| publication_type: industry_news | +0 |
+| Modus operandi > 200 chars | +10 |
+| Modus operandi > 100 chars | +7 |
+| Modus operandi > 50 chars | +3 |
+| Financial amount present | +10 |
+
+**Tier 2 — Typology & Predicate Crime (0-30)**:
+
+| Signal | Points |
+|--------|--------|
+| HIGH_VALUE typology (18 types) | +15 |
+| Mid-tier typology (not HIGH, not LOW) | +8 |
+| LOW_VALUE typology (AML News, compliance failure) | +0 |
+| Cybercrime predicate (Ransomware, BEC, Deepfake, Synthetic identity, Cybercrime proceeds, Darknet, NFT/DeFi) | +15 |
+| Trafficking predicate (Human/Drug trafficking proceeds) | +12 |
+| Sanctions evasion | +12 |
+| Other specific predicate | +5 |
+
+**Tier 3 — Authority & Significance (0-20)**:
+
+| Signal | Points |
+|--------|--------|
+| Major authority named (AUSTRAC, DOJ, FCA, FinCEN, OFAC, MAS, HKMA, SEC, Europol, Interpol, ED India, NCA, RBI, etc.) | +10 |
+| Other named authority | +5 |
+| UN/FATF/FSRB/mutual evaluation in title/summary | +10 |
+| National regulator keyword in title/summary | +5 |
+
+**Tier 4 — Strategic Priority (0-10)**:
+
+| Signal | Points |
+|--------|--------|
+| Priority country (Australia, UK, India) | +5 |
+| Other named country | +2 |
+| action_required = true | +5 |
+
+### Quality Tiers
+
+Each article is assigned a tier label based on its score, stored as `quality_tier` in Supabase:
+
+| Tier | Score | Meaning |
+|------|-------|---------|
+| **Critical** | 80-100 | Major enforcement actions, large fines, OFAC designations |
+| **High** | 60-79 | Significant enforcement, regulatory guidance with named authority |
+| **Elevated** | 40-59 | Specific typology articles with moderate detail |
+| **Watch** | 0-39 | Generic news, thin content, informational |
+
+### Cap Override
+
+Articles scoring **55+** bypass the country cap (still subject to MAX_TOTAL). This ensures genuinely significant articles (major enforcement actions, large fines, UN/FATF decisions) are never silently dropped.
 
 ### Total Cap
 
-**MAX_TOTAL = 40** articles per pipeline run (configurable via `CURATION_MAX_TOTAL` env var). Overflow articles are logged with titles and countries.
+**MAX_TOTAL = 40** articles per pipeline run (configurable via `CURATION_MAX_TOTAL` env var). Overflow articles are logged with titles, countries, and scores.
 
 ### Post-AI Date Gate
 
@@ -511,6 +565,8 @@ On upload, each article is linked to up to 5 related articles:
 | key_entities | TEXT[] | Array of entity names |
 | action_required | BOOLEAN | Default FALSE |
 | publication_type | TEXT | enforcement_action / regulatory_guidance / typology_study / industry_news |
+| quality_score | INTEGER | 0-100 quality score from scoring model (default 0) |
+| quality_tier | TEXT | Critical / High / Elevated / Watch (derived from score) |
 | related_article_ids | UUID[] | Up to 5 linked article IDs |
 | created_at | TIMESTAMPTZ | Auto-generated |
 

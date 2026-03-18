@@ -147,7 +147,7 @@ def fetch_serpapi_range(from_date: str, to_date: str) -> list[dict]:
                     "q": query,
                     "api_key": SERPAPI_KEYS[idx],
                     "hl": "en",
-                    "gl": "us",
+                    "gl": "au",
                     "num": 10,
                     "tbs": tbs,
                 }

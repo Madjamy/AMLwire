@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-NEWSAPI_KEYS = [k for k in [os.getenv("NEWSAPI_KEY_1"), os.getenv("NEWSAPI_KEY_2")] if k]
+NEWSAPI_KEYS = [k for k in [os.getenv(f"NEWSAPI_KEY_{i}") for i in range(1, 10)] if k]
 NEWSAPI_URL = "https://newsapi.org/v2/everything"
 
 TOP_N = 5  # Articles to return per country
@@ -21,6 +21,10 @@ COUNTRY_QUERIES = {
         "Australia AUSTRAC money laundering",
         "Australian AML financial crime enforcement",
         "Australia sanctions compliance",
+        "ASIC Australia financial crime fraud enforcement",
+        "Australian Federal Police money laundering",
+        "APRA Australia banking compliance penalty",
+        "Australia court convicted laundering fraud proceeds",
     ],
     "USA": [
         "US FinCEN OFAC money laundering enforcement",

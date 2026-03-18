@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Two API keys for fallback — if key 1 hits rate limit, key 2 is used automatically
-NEWSAPI_KEYS = [k for k in [os.getenv("NEWSAPI_KEY_1"), os.getenv("NEWSAPI_KEY_2")] if k]
+NEWSAPI_KEYS = [k for k in [os.getenv(f"NEWSAPI_KEY_{i}") for i in range(1, 10)] if k]
 NEWSAPI_URL = "https://newsapi.org/v2/everything"
 
 AML_QUERIES = [

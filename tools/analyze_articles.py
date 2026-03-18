@@ -260,22 +260,40 @@ Generate 4-7 short lowercase tags. Include: the typology slug, jurisdiction(s), 
 AMLWIRE HEADLINE RULE
 Generate an ORIGINAL AMLWire headline for the amlwire_title field.
 CRITICAL: Base the headline on the FULL ARTICLE TEXT (scraped body), NOT on rephrasing the Source Headline.
-Read the article body to extract specific names of people/entities, exact dollar amounts with currency, named authorities, and jurisdictions — then construct the headline from those facts.
-DO NOT paraphrase or re-order the words of the Source Headline. The headline must come from content in the article body.
-Format: [Actor/Authority] [Strong Verb] [Entity/Subject] [Amount if known] [Jurisdiction/Context]
-Strong verbs: Charges, Sentences, Fines, Seizes, Freezes, Dismantles, Exposes, Flags, Bans, Warns, Uncovers, Convicts, Arrests, Penalises, Revokes, Suspends
-Rules:
-- Name the specific authority or actor and the specific entity/person involved (from article body)
-- Include the exact amount or scale with currency if mentioned in the article body
-- Keep under 120 characters. Active voice only.
-- Do NOT use hedge words ("allegedly", "reportedly") in the headline
-Good examples (all derived from article body detail, not headline rephrasing):
-  "DOJ Charges Miami Developer with USD 45M Real Estate Money Laundering"
-  "AUSTRAC Fines Crown Resorts AUD 450M for Systemic AML Control Failures"
-  "Europol Dismantles Crypto Mixer Linked to EUR 100M in Drug Proceeds"
-Bad examples:
+DO NOT paraphrase or re-order words from the Source Headline. Read the full article and write a headline from scratch.
+
+THE HEADLINE TEST: Would a compliance professional who has never seen this story understand WHAT HAPPENED and WHY IT MATTERS from the headline alone? If not, rewrite it.
+
+Principles:
+1. TELL THE STORY — the headline must convey the narrative, not just list facts. A reader should think "I understand what happened" not "I need to click to find out."
+2. IDENTIFY people and entities with enough context — never assume the reader knows who someone is. Use a descriptor: "Fugitive scam boss Chen Zhi" not just "Chen Zhi". "Turkish state bank Halkbank" not just "Halkbank". Well-known entities (DOJ, Binance, HSBC) need no descriptor.
+3. ANSWER "SO WHAT?" — if the headline is about a report or statistic, frame it around why it matters, not just the number. If it is about an enforcement action, make clear what the person/entity did wrong.
+4. WRITE LIKE A NEWS EDITOR — the headline should read like a top-tier newspaper (Financial Times, Reuters), not like a database entry or a compliance log.
+5. NO PREFIXES — never start with a country code ("US:", "India:"), source name ("CBC News:", "Bitcoinist:"), or category label.
+
+Format guidance:
+- Active voice, strong verbs: Charges, Sentences, Fines, Seizes, Dismantles, Exposes, Convicts, Arrests, etc.
+- Spell out acronyms unless universally known in AML (OK: DOJ, FBI, FATF, AUSTRAC, OFAC, FCA, Europol. Expand: SDNY, MAS, ED, PPATK, HC, PMLA)
+- Keep under 120 characters
+- Do NOT use hedge words ("allegedly", "reportedly")
+- Never stack more than two nouns before the verb
+
+Good examples (notice how each tells a complete story):
+  "DOJ Charges Miami Developer Over USD 45M Real Estate Laundering Scheme"
+  "AUSTRAC Fines Crown Resorts AUD 450M for Systemic AML Failures"
+  "Canadian Fraud Losses Hit CAD 704M as AI-Powered Investment Scams Surge"
+  "Fugitive Scam Boss Chen Zhi Built Political Ties to Shield Cambodia Fraud Rings"
+  "Turkish State Bank Halkbank Reaches No-Fine Plea Deal Over Iran Oil Laundering"
+  "Global Financial Crime Hits USD 4.4 Trillion, Nasdaq Verafin Report Finds"
+
+Bad examples (and why they fail):
+  "Chen Zhi Builds Politician Network for Cambodia Scam Hubs" (who is Chen Zhi? no context, reader learns nothing)
+  "Nasdaq Verafin Reports USD 4.4 Trillion Global Illicit Financial Activity in 2026 Report" (reads like a database entry, no "so what")
+  "Investment Scams Cause $704M AI Fraud Losses" (where? why does it matter? too vague)
+  "Manhattan Judge Allows SDNY-Halkbank No-Fine Plea on Iran Oil Laundering" (noun-stack, unexpanded acronym, unclear)
+  "ED Files Supplementary PMLA Complaint Against Shree Ganesh Jewellery House Rs 95.75 Crore Assets" (unexpanded acronyms, noun-stack, reads like a legal filing not a headline)
   "Man Charged With Money Laundering" (too vague — no entity, no amount)
-  "Regulators Take Action" (no specifics)
+  "Regulators Take Action on Financial Crime" (no specifics)
   Any headline that just rewords or reorders the Source Headline (this is the most common failure — avoid it)
 
 AMLWIRE WRITING STYLE
@@ -466,11 +484,19 @@ def _scrape_article(url: str) -> str:
     return ""
 
 
-def _build_user_prompt(articles: list[dict], current_date: str) -> str:
+def _build_user_prompt(articles: list[dict], current_date: str, backfill_mode: bool = False) -> str:
+    if backfill_mode:
+        date_instruction = (
+            f"Today's date: {current_date}. This is a BACKFILL run — include articles from 2025 and 2026 only. "
+            f"Exclude any article whose content signals it is from before 2025.\n\n"
+        )
+    else:
+        date_instruction = (
+            f"Today's date: {current_date}. Only include articles published within the last 14 days. "
+            f"Exclude any article whose content signals it is older than that.\n\n"
+        )
     lines = [
-        f"Today's date: {current_date}. Only include articles published within the last 14 days. "
-        f"Exclude any article whose content signals it is older than that.\n\n"
-        f"Analyze the following articles and return a JSON array:\n"
+        date_instruction + f"Analyze the following articles and return a JSON array:\n"
     ]
     for i, a in enumerate(articles, 1):
         lines.append(f"--- Article {i} ---")
@@ -608,11 +634,11 @@ def _scrape_batch(articles: list[dict]) -> list[dict]:
     return articles
 
 
-def _call_ai(client, articles: list[dict], current_date: str) -> list[dict]:
+def _call_ai(client, articles: list[dict], current_date: str, backfill_mode: bool = False) -> list[dict]:
     """Send one batch of articles to OpenRouter. Returns structured list."""
     raw = ""
     try:
-        user_prompt = _build_user_prompt(articles, current_date)
+        user_prompt = _build_user_prompt(articles, current_date, backfill_mode=backfill_mode)
         response = client.chat.completions.create(
             model=OPENROUTER_MODEL,
             messages=[
@@ -651,7 +677,7 @@ def _call_ai(client, articles: list[dict], current_date: str) -> list[dict]:
         return recovered
     except Exception as e:
         print(f"[Analyze] OpenRouter API error: {e}")
-        return []
+        return None  # None = API error (distinct from [] = AI excluded all)
 
 
 def _recover_json_articles(raw: str) -> list[dict]:
@@ -681,10 +707,11 @@ def _recover_json_articles(raw: str) -> list[dict]:
     return recovered
 
 
-def analyze_articles(articles: list[dict]) -> list[dict]:
+def analyze_articles(articles: list[dict], backfill_mode: bool = False) -> list[dict]:
     """
     Scrape full article text, then send to Grok in batches for structured analysis.
     Returns a list of structured dicts ready for Supabase upload.
+    backfill_mode: if True, relaxes 14-day date filter to accept 2025-2026 articles.
     """
     if not OPENROUTER_API_KEY:
         raise ValueError("OPENROUTER_API_KEY not set in .env")
@@ -756,20 +783,20 @@ def analyze_articles(articles: list[dict]) -> list[dict]:
 
         # Step 2: send to Grok with retry logic
         print(f"[Analyze] Sending batch {batch_num} to {OPENROUTER_MODEL}...")
-        results = _call_ai(client, batch, current_date)
+        results = _call_ai(client, batch, current_date, backfill_mode=backfill_mode)
 
         # Retry on failure: wait 5s, then retry. If batch > 5, split in half.
-        if not results:
+        if results is None or (not results and not isinstance(results, list)):
             print(f"[Analyze] Batch {batch_num} failed — retrying after 5s...")
             _time.sleep(5)
-            results = _call_ai(client, batch, current_date)
+            results = _call_ai(client, batch, current_date, backfill_mode=backfill_mode)
 
-            if not results and len(batch) > 5:
+            if results is None and len(batch) > 5:
                 print(f"[Analyze] Retry failed — splitting batch {batch_num} in half...")
                 mid = len(batch) // 2
-                results_a = _call_ai(client, batch[:mid], current_date)
+                results_a = _call_ai(client, batch[:mid], current_date, backfill_mode=backfill_mode)
                 _time.sleep(2)
-                results_b = _call_ai(client, batch[mid:], current_date)
+                results_b = _call_ai(client, batch[mid:], current_date, backfill_mode=backfill_mode)
                 results = (results_a or []) + (results_b or [])
 
         all_analyzed.extend(results)

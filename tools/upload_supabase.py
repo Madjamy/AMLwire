@@ -169,6 +169,8 @@ def upload_articles(articles: list[dict]) -> int:
             "key_entities": article.get("key_entities") or [],
             "action_required": article.get("action_required") or False,
             "publication_type": article.get("publication_type") or None,
+            "quality_score": article.get("quality_score", 0),
+            "quality_tier": article.get("quality_tier", "Watch"),
             "related_article_ids": [],
         }
 

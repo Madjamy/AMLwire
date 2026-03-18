@@ -46,6 +46,7 @@ GDELT_QUERIES = [
     # Sanctions
     '"sanctions evasion" enforcement',
     '"OFAC" sanctions designation',
+    '"UN sanctions" enforcement designation',
 ]
 
 

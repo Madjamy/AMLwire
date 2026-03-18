@@ -177,10 +177,25 @@ def run_pipeline():
             article["country"] = url_to_country.get(src) or None
 
     # Drop articles the AI dated older than 7 days (final gate)
+    # Also cross-check: if the AI summary mentions a year older than current year, flag as stale
+    import re as _re
+    current_year = datetime.now(timezone.utc).year
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
     fresh = []
     for article in analyzed:
         date_str = article.get("published_date", "")
+        summary = article.get("summary", "") + " " + article.get("modus_operandi", "")
+
+        # Content-date cross-check: detect stale articles the AI missed
+        # Look for past years in the summary/MO (e.g. "in 2023", "January 2024")
+        year_mentions = _re.findall(r'\b(20[0-9]{2})\b', summary)
+        stale_years = [int(y) for y in year_mentions if int(y) < current_year - 1]
+        recent_years = [int(y) for y in year_mentions if int(y) >= current_year - 1]
+        if stale_years and not recent_years:
+            oldest = min(stale_years)
+            log.info(f"  Skipping stale (content references {oldest}): {article.get('title', '')[:60]}")
+            continue
+
         if date_str:
             try:
                 for fmt in ("%d-%m-%Y", "%Y-%m-%d"):

@@ -12,7 +12,27 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+TAVILY_API_KEYS = [k for k in [os.getenv(f"TAVILY_API_KEY{s}") for s in ["", "_2", "_3", "_4", "_5", "_6", "_7", "_8", "_9"]] if k]
+TAVILY_API_KEY = TAVILY_API_KEYS[0] if TAVILY_API_KEYS else None
+_tavily_key_idx = 0
+
+
+def _get_tavily_key() -> str | None:
+    """Get current Tavily key, rotating on quota errors."""
+    global _tavily_key_idx
+    if not TAVILY_API_KEYS:
+        return None
+    return TAVILY_API_KEYS[_tavily_key_idx % len(TAVILY_API_KEYS)]
+
+
+def _rotate_tavily_key() -> bool:
+    """Rotate to next Tavily key. Returns False if all keys exhausted."""
+    global _tavily_key_idx
+    _tavily_key_idx += 1
+    if _tavily_key_idx >= len(TAVILY_API_KEYS):
+        return False
+    print(f"[Tavily] Key {_tavily_key_idx} quota hit, switching to key {_tavily_key_idx + 1}/{len(TAVILY_API_KEYS)}")
+    return True
 TAVILY_URL = "https://api.tavily.com/search"
 
 # Queries targeting AML topics NOT well-covered by NewsAPI keyword searches
@@ -61,6 +81,8 @@ TAVILY_QUERIES = [
     # Sanctions
     "sanctions evasion enforcement OFAC SDN",
     "sanctions violation fine penalty 2026",
+    "UN Security Council sanctions designation enforcement 2026",
+    "UN Panel of Experts sanctions evasion report 2026",
 
     # Tax crimes
     "tax evasion money laundering prosecution",
@@ -133,6 +155,9 @@ COUNTRY_QUERIES = {
     "Australia": [
         "AUSTRAC money laundering enforcement Australia",
         "Australia financial crime AML action 2026",
+        "ASIC Australia enforcement penalty fraud 2026",
+        "Australian Federal Police AFP money laundering arrest 2026",
+        "Scamwatch Australia fraud scam alert 2026",
     ],
     "USA": [
         "FinCEN OFAC enforcement action United States money laundering",
@@ -458,11 +483,12 @@ def _search_regulatory(query: str, domains: list[str], days: int = 90, country_t
     Search within specific regulatory domains using Tavily's include_domains filter.
     Returns primary-source content direct from the regulatory body's website.
     """
-    if not TAVILY_API_KEY:
+    key = _get_tavily_key()
+    if not key:
         return []
     try:
         payload = {
-            "api_key": TAVILY_API_KEY,
+            "api_key": key,
             "query": query,
             "search_depth": "basic",
             "max_results": 5,
@@ -472,6 +498,11 @@ def _search_regulatory(query: str, domains: list[str], days: int = 90, country_t
             "include_answer": False,
         }
         resp = requests.post(TAVILY_URL, json=payload, timeout=20)
+        if resp.status_code == 432:
+            if _rotate_tavily_key():
+                return _search_regulatory(query, domains, days, country_tag)
+            print(f"[Tavily Regulatory] All keys exhausted on '{query}'")
+            return []
         resp.raise_for_status()
         data = resp.json()
 
@@ -509,17 +540,21 @@ def _search_regulatory(query: str, domains: list[str], days: int = 90, country_t
         return results
 
     except Exception as e:
+        if "432" in str(e):
+            if _rotate_tavily_key():
+                return _search_regulatory(query, domains, days, country_tag)
         print(f"[Tavily Regulatory] Error on '{query}' ({domains}): {e}")
         return []
 
 
 def _search(query: str, days: int = 7, country_tag: str = "") -> list[dict]:
     """Execute a single Tavily search and return standardised article dicts."""
-    if not TAVILY_API_KEY:
+    key = _get_tavily_key()
+    if not key:
         return []
     try:
         payload = {
-            "api_key": TAVILY_API_KEY,
+            "api_key": key,
             "query": query,
             "topic": "news",            # news only — filters out reference/educational pages
             "search_depth": "basic",
@@ -529,6 +564,11 @@ def _search(query: str, days: int = 7, country_tag: str = "") -> list[dict]:
             "include_answer": False,
         }
         resp = requests.post(TAVILY_URL, json=payload, timeout=20)
+        if resp.status_code == 432:
+            if _rotate_tavily_key():
+                return _search(query, days, country_tag)  # retry with next key
+            print(f"[Tavily] All keys exhausted on '{query}'")
+            return []
         resp.raise_for_status()
         data = resp.json()
 
@@ -580,6 +620,9 @@ def _search(query: str, days: int = 7, country_tag: str = "") -> list[dict]:
         return results
 
     except Exception as e:
+        if "432" in str(e):
+            if _rotate_tavily_key():
+                return _search(query, days, country_tag)
         print(f"[Tavily] Error on '{query}': {e}")
         return []
 
@@ -590,8 +633,8 @@ def fetch_articles() -> list[dict]:
     Covers topic gaps not well-served by NewsAPI.
     Returns deduplicated list of article dicts with full content.
     """
-    if not TAVILY_API_KEY:
-        print("[Tavily] TAVILY_API_KEY not set — skipping Tavily fetch")
+    if not TAVILY_API_KEYS:
+        print("[Tavily] No TAVILY_API_KEY set — skipping Tavily fetch")
         return []
 
     seen_urls = set()
