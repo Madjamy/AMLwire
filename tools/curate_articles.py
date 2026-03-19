@@ -266,12 +266,19 @@ def curate_articles(articles: list[dict]) -> list[dict]:
         override_count = len([a for a in overflow_high_score if a in curated])
         print(f"[Curate] Cap override: {override_count} high-scoring articles (>={CAP_OVERRIDE_THRESHOLD}) bypassed country cap")
 
-    # Log tier breakdown
+    # Log tier breakdown (all articles + curated)
+    tier_counts_all = defaultdict(int)
+    for a in articles:
+        tier_counts_all[_assign_tier(a.get("quality_score", 0))] += 1
     tier_counts = defaultdict(int)
     for a in curated:
         tier_counts[a["quality_tier"]] += 1
-    tier_str = ", ".join(f"{t}:{n}" for t, n in sorted(tier_counts.items()))
-    print(f"[Curate] Tier breakdown: {tier_str}")
+
+    tier_order = ["Critical", "High", "Elevated", "Watch"]
+    all_str = " | ".join(f"{t}: {tier_counts_all.get(t, 0)}" for t in tier_order)
+    cur_str = " | ".join(f"{t}: {tier_counts.get(t, 0)}" for t in tier_order)
+    print(f"[Curate] Tier distribution (all scored):  {all_str}")
+    print(f"[Curate] Tier distribution (curated):     {cur_str}")
 
     # Log published articles with scores and tiers
     for a in curated:

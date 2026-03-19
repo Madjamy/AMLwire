@@ -22,7 +22,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install requests supabase python-dotenv "openai>=1.12.0" httpx beautifulsoup4
+        run: pip install requests supabase python-dotenv "openai>=1.12.0" httpx beautifulsoup4 feedparser
 
       - name: Run AMLWire pipeline
         env:
@@ -38,8 +38,13 @@ jobs:
           TAVILY_API_KEY_2: ${{ secrets.TAVILY_API_KEY_2 }}
           TAVILY_API_KEY_3: ${{ secrets.TAVILY_API_KEY_3 }}
           TAVILY_API_KEY_4: ${{ secrets.TAVILY_API_KEY_4 }}
+          NEWSDATA_API_KEY: ${{ secrets.NEWSDATA_API_KEY }}
+          GNEWS_API_KEY: ${{ secrets.GNEWS_API_KEY }}
+          THENEWSAPI_API_KEY: ${{ secrets.THENEWSAPI_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          Telegram_API_KEY: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py
 
       - name: Upload logs on failure

@@ -14,24 +14,64 @@ load_dotenv()
 
 TAVILY_API_KEYS = [k for k in [os.getenv(f"TAVILY_API_KEY{s}") for s in ["", "_2", "_3", "_4", "_5", "_6", "_7", "_8", "_9"]] if k]
 TAVILY_API_KEY = TAVILY_API_KEYS[0] if TAVILY_API_KEYS else None
+
+# ─── Key-to-Function Mapping ────────────────────────────────────────────────
+# Each Tavily key handles a DIFFERENT query function. No overlap.
+# Key 0 = topics, Key 1 = authorities, Key 2 = priority countries, Key 3 = remaining countries + regulatory
+KEY_FUNCTION_MAP = {
+    0: "topics",           # Global topic queries (TAVILY_QUERIES)
+    1: "authorities",      # FIU/FATF/FSRB queries (AUTHORITY_QUERIES)
+    2: "priority_countries",  # AU, US, UK, India, Singapore
+    3: "remaining",        # Other countries + regulatory domain queries
+}
+
+# Track which keys are exhausted
+_exhausted_keys: set[int] = set()
+
+
+def _get_key_for_function(function: str) -> tuple[str | None, int]:
+    """Get the specific key assigned to a function. Returns (key, key_index) or (None, -1)."""
+    for idx, fn in KEY_FUNCTION_MAP.items():
+        if fn == function:
+            if idx >= len(TAVILY_API_KEYS) or idx in _exhausted_keys:
+                return None, idx
+            return TAVILY_API_KEYS[idx], idx
+    # Fallback: use any non-exhausted key
+    for idx, key in enumerate(TAVILY_API_KEYS):
+        if idx not in _exhausted_keys:
+            return key, idx
+    return None, -1
+
+
+def _mark_key_exhausted(key_idx: int):
+    """Mark a key as exhausted after quota error."""
+    _exhausted_keys.add(key_idx)
+    print(f"[Tavily] Key {key_idx + 1}/{len(TAVILY_API_KEYS)} exhausted")
+
+
+# Legacy compatibility
 _tavily_key_idx = 0
 
 
 def _get_tavily_key() -> str | None:
-    """Get current Tavily key, rotating on quota errors."""
+    """Get current Tavily key (legacy — used by _search and _search_regulatory)."""
     global _tavily_key_idx
     if not TAVILY_API_KEYS:
         return None
-    return TAVILY_API_KEYS[_tavily_key_idx % len(TAVILY_API_KEYS)]
+    while _tavily_key_idx < len(TAVILY_API_KEYS):
+        if _tavily_key_idx not in _exhausted_keys:
+            return TAVILY_API_KEYS[_tavily_key_idx]
+        _tavily_key_idx += 1
+    return None
 
 
 def _rotate_tavily_key() -> bool:
     """Rotate to next Tavily key. Returns False if all keys exhausted."""
     global _tavily_key_idx
+    _mark_key_exhausted(_tavily_key_idx)
     _tavily_key_idx += 1
     if _tavily_key_idx >= len(TAVILY_API_KEYS):
         return False
-    print(f"[Tavily] Key {_tavily_key_idx} quota hit, switching to key {_tavily_key_idx + 1}/{len(TAVILY_API_KEYS)}")
     return True
 TAVILY_URL = "https://api.tavily.com/search"
 
@@ -627,68 +667,129 @@ def _search(query: str, days: int = 7, country_tag: str = "") -> list[dict]:
         return []
 
 
+PRIORITY_COUNTRIES = {"Australia", "USA", "UK", "India", "Singapore"}
+
+
 def fetch_articles() -> list[dict]:
     """
     Fetch AML news via Tavily for the last 7 days.
-    Covers topic gaps not well-served by NewsAPI.
-    Returns deduplicated list of article dicts with full content.
+    Each of the 4 keys handles a different function:
+      Key 1 → Global topic queries
+      Key 2 → Authority/FSRB queries
+      Key 3 → Priority country queries (AU, US, UK, India, Singapore)
+      Key 4 → Remaining country + regulatory domain queries
     """
     if not TAVILY_API_KEYS:
         print("[Tavily] No TAVILY_API_KEY set — skipping Tavily fetch")
         return []
 
+    global _tavily_key_idx
     seen_urls = set()
     results = []
 
-    # Global topic queries
-    for query in TAVILY_QUERIES:
-        for article in _search(query, days=7):
-            if article["url"] not in seen_urls:
-                seen_urls.add(article["url"])
-                results.append(article)
-
-    print(f"[Tavily] Global fetch: {len(results)} articles")
-
-    # FIU / FATF / FSRB authority queries (top 3 per query, deduplicated)
-    authority_start = len(results)
-    for query in AUTHORITY_QUERIES:
-        for article in _search(query, days=7):
-            if article["url"] not in seen_urls:
-                seen_urls.add(article["url"])
-                results.append(article)
-    print(f"[Tavily] Authority fetch (FIU/FATF/FSRB): {len(results) - authority_start} articles")
-
-    # Country-specific queries (top 5 per country)
-    country_total = 0
-    for country, queries in COUNTRY_QUERIES.items():
-        country_articles = []
-        for query in queries:
-            for article in _search(query, days=7, country_tag=country):
-                if article["url"] not in seen_urls and len(country_articles) < 5:
-                    seen_urls.add(article["url"])
-                    country_articles.append(article)
-            if len(country_articles) >= 5:
+    # ── Function 1: Global topic queries (Key 1) ─────────────────────────
+    key, key_idx = _get_key_for_function("topics")
+    if key:
+        _tavily_key_idx = key_idx
+        topic_start = len(results)
+        for query in TAVILY_QUERIES:
+            if key_idx in _exhausted_keys:
                 break
-        results.extend(country_articles)
-        country_total += len(country_articles)
-        print(f"[Tavily] {country}: {len(country_articles)} articles")
+            for article in _search(query, days=7):
+                if article["url"] not in seen_urls:
+                    seen_urls.add(article["url"])
+                    results.append(article)
+        print(f"[Tavily] Topics (key {key_idx + 1}): {len(results) - topic_start} articles")
+    else:
+        print("[Tavily] No key available for topic queries")
 
-    print(f"[Tavily] Total fetched: {len(results)} articles ({country_total} country-specific)")
+    # ── Function 2: Authority/FSRB queries (Key 2) ───────────────────────
+    key, key_idx = _get_key_for_function("authorities")
+    if key:
+        _tavily_key_idx = key_idx
+        auth_start = len(results)
+        for query in AUTHORITY_QUERIES:
+            if key_idx in _exhausted_keys:
+                break
+            for article in _search(query, days=7):
+                if article["url"] not in seen_urls:
+                    seen_urls.add(article["url"])
+                    results.append(article)
+        print(f"[Tavily] Authorities (key {key_idx + 1}): {len(results) - auth_start} articles")
+    else:
+        print("[Tavily] No key available for authority queries")
 
-    # Regulatory direct queries — fetches content FROM regulatory body websites
-    reg_start = len(results)
-    for spec in REGULATORY_DOMAIN_QUERIES:
-        for article in _search_regulatory(
-            query=spec["query"],
-            domains=spec["domains"],
-            country_tag=spec.get("country") or "",
-        ):
-            if article["url"] not in seen_urls:
-                seen_urls.add(article["url"])
-                results.append(article)
-    reg_count = len(results) - reg_start
-    print(f"[Tavily] Regulatory direct: {reg_count} articles from regulatory websites")
+    # ── Function 3: Priority country queries (Key 3) ─────────────────────
+    key, key_idx = _get_key_for_function("priority_countries")
+    if key:
+        _tavily_key_idx = key_idx
+        prio_start = len(results)
+        for country, queries in COUNTRY_QUERIES.items():
+            if country not in PRIORITY_COUNTRIES:
+                continue
+            if key_idx in _exhausted_keys:
+                break
+            country_articles = []
+            for query in queries:
+                for article in _search(query, days=7, country_tag=country):
+                    if article["url"] not in seen_urls and len(country_articles) < 5:
+                        seen_urls.add(article["url"])
+                        country_articles.append(article)
+                if len(country_articles) >= 5:
+                    break
+            results.extend(country_articles)
+            if country_articles:
+                print(f"[Tavily] {country} (key {key_idx + 1}): {len(country_articles)} articles")
+        print(f"[Tavily] Priority countries (key {key_idx + 1}): {len(results) - prio_start} articles")
+    else:
+        print("[Tavily] No key available for priority country queries")
 
+    # ── Function 4: Remaining countries + regulatory (Key 4) ─────────────
+    key, key_idx = _get_key_for_function("remaining")
+    if key:
+        _tavily_key_idx = key_idx
+        rem_start = len(results)
+        for country, queries in COUNTRY_QUERIES.items():
+            if country in PRIORITY_COUNTRIES:
+                continue
+            if key_idx in _exhausted_keys:
+                break
+            country_articles = []
+            for query in queries:
+                for article in _search(query, days=7, country_tag=country):
+                    if article["url"] not in seen_urls and len(country_articles) < 5:
+                        seen_urls.add(article["url"])
+                        country_articles.append(article)
+                if len(country_articles) >= 5:
+                    break
+            results.extend(country_articles)
+            if country_articles:
+                print(f"[Tavily] {country} (key {key_idx + 1}): {len(country_articles)} articles")
+
+        # Regulatory domain queries (every 3 days to stay within quota)
+        from datetime import datetime as _dt
+        day_of_year = _dt.now(timezone.utc).timetuple().tm_yday
+        if day_of_year % 3 == 0:
+            for spec in REGULATORY_DOMAIN_QUERIES:
+                if key_idx in _exhausted_keys:
+                    break
+                for article in _search_regulatory(
+                    query=spec["query"],
+                    domains=spec["domains"],
+                    country_tag=spec.get("country") or "",
+                ):
+                    if article["url"] not in seen_urls:
+                        seen_urls.add(article["url"])
+                        results.append(article)
+            print(f"[Tavily] Regulatory domain (key {key_idx + 1}): included (day {day_of_year} mod 3 == 0)")
+        else:
+            print(f"[Tavily] Regulatory domain: skipped (runs every 3 days, next on day {day_of_year + (3 - day_of_year % 3)})")
+
+        print(f"[Tavily] Remaining countries + reg (key {key_idx + 1}): {len(results) - rem_start} articles")
+    else:
+        print("[Tavily] No key available for remaining queries")
+
+    print(f"[Tavily] Total: {len(results)} articles")
     return results
 
 

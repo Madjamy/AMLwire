@@ -81,10 +81,68 @@ RSS_FEEDS = [
      "International", "Global"),
 
     # ── Australian news ────────────────────────────────────────────────────
-    # AUSTRAC and CDPP don't offer RSS — covered via NewsAPI + Tavily queries
     ("ABC News Crime AU",
      "https://www.abc.net.au/news/feed/2942460/rss.xml",
      "Australia", "Asia-Pacific"),
+
+    ("AUSTRAC",
+     "http://www.austrac.gov.au/rss/news.xml",
+     "Australia", "Asia-Pacific"),
+
+    ("CDPP Australia",
+     "https://www.cdpp.gov.au/rss-feeds",
+     "Australia", "Asia-Pacific"),
+
+    ("Guardian AU",
+     "https://www.theguardian.com/australia-news/rss",
+     "Australia", "Asia-Pacific"),
+
+    # ── UK additional ─────────────────────────────────────────────────────
+    ("Guardian UK",
+     "https://www.theguardian.com/uk-news/rss",
+     "United Kingdom", "Europe"),
+
+    # ── India ─────────────────────────────────────────────────────────────
+    ("RBI India",
+     "https://www.rbi.org.in/Scripts/rss.aspx",
+     "India", "Asia-Pacific"),
+
+    ("NDTV India",
+     "https://feeds.feedburner.com/NDTV-LatestNews",
+     "India", "Asia-Pacific"),
+
+    # ── Canada ────────────────────────────────────────────────────────────
+    ("CBC News",
+     "https://www.cbc.ca/webfeed/rss/rss-topstories",
+     "Canada", "Americas"),
+
+    ("Financial Post",
+     "https://business.financialpost.com/feed/",
+     "Canada", "Americas"),
+
+    # ── UAE ───────────────────────────────────────────────────────────────
+    ("The National UAE",
+     "https://www.thenationalnews.com/rss",
+     "UAE", "Middle East"),
+
+    # ── Japan ─────────────────────────────────────────────────────────────
+    ("NHK World",
+     "https://www3.nhk.or.jp/rss/news/cat0.xml",
+     "Japan", "Asia-Pacific"),
+
+    # ── Singapore ─────────────────────────────────────────────────────────
+    ("Channel NewsAsia",
+     "https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml",
+     "Singapore", "Asia-Pacific"),
+
+    ("Straits Times",
+     "https://www.straitstimes.com/news/singapore/rss.xml",
+     "Singapore", "Asia-Pacific"),
+
+    # ── Specialist ────────────────────────────────────────────────────────
+    ("EIN Presswire AML",
+     "https://moneylaundering.einnews.com/all_rss",
+     "International", "Global"),
 ]
 
 # AML-relevant keywords — article must contain at least one to be included.
@@ -106,6 +164,37 @@ AML_KEYWORDS = [
     "sectoral risk", "national risk assessment", "nra",
     "confiscation order", "restraining order", "civil recovery",
 ]
+
+# Stricter keyword list for broad general-news feeds (Guardian, NDTV, ABC Crime, CBC, etc.)
+# These feeds produce thousands of articles — single words like "fraud" or "arrest" match
+# too many irrelevant articles (speeding fines, sports, condo boards, celebrity trials).
+# Require multi-word AML phrases to reduce noise.
+_STRICT_AML_KEYWORDS = [
+    "money laundering", "anti-money laundering", "aml", "financial crime",
+    "proceeds of crime", "illicit funds", "illicit finance",
+    "money laundering case", "money laundering charge", "money laundering arrest",
+    "money laundering conviction", "money laundering probe",
+    "laundering proceeds", "laundered funds",
+    "enforcement directorate", "pmla", "efcc", "fintrac",
+    "austrac", "fincen", "fatf", "ofac", "sanctions evasion",
+    "terrorist financing", "hawala", "shell company", "beneficial owner",
+    "asset forfeiture", "asset seizure", "confiscation order",
+    "wire fraud", "bank fraud", "investment fraud",
+    "cyber fraud", "ransomware", "pig butchering", "romance scam",
+    "deepfake fraud", "crypto laundering",
+    "compliance failure", "regulatory fine", "aml penalty",
+    "suspicious transaction", "suspicious activity report",
+    "financial fraud scheme", "fraud ring", "fraud syndicate",
+    "embezzlement", "siphon", "misappropriat",
+    "extradition", "criminal proceeds",
+]
+
+# Feeds that need the stricter filter (broad general-news outlets)
+_STRICT_FILTER_FEEDS = {
+    "ABC News Crime AU", "Guardian AU", "Guardian UK", "NDTV India",
+    "CBC News", "Financial Post", "The National UAE", "NHK World",
+    "Channel NewsAsia", "Straits Times",
+}
 
 
 def _parse_date(entry) -> str | None:
@@ -138,8 +227,10 @@ def _is_recent(date_str: str | None, cutoff: datetime) -> bool:
         return False  # Unparseable dates are also rejected
 
 
-def _is_aml_relevant(title: str, summary: str) -> bool:
+def _is_aml_relevant(title: str, summary: str, feed_name: str = "") -> bool:
     text = (title + " " + summary).lower()
+    if feed_name in _STRICT_FILTER_FEEDS:
+        return any(kw in text for kw in _STRICT_AML_KEYWORDS)
     return any(kw in text for kw in AML_KEYWORDS)
 
 
@@ -147,14 +238,18 @@ def _fetch_feed(name: str, url: str, country: str, region: str, cutoff: datetime
     """Fetch and parse a single RSS feed. Returns list of article dicts."""
     articles = []
     try:
-        # Use requests for Google News URLs (handles redirects + cookies better)
-        if "news.google.com" in url:
-            resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=12, allow_redirects=True)
+        # Use requests with timeout for ALL feeds to prevent hanging on unresponsive servers
+        try:
+            resp = requests.get(url, headers={"User-Agent": "AMLWire/1.0 (+https://amlwire.com)"}, timeout=12, allow_redirects=True)
             if resp.status_code != 200:
                 return []
             feed = feedparser.parse(resp.text)
-        else:
-            feed = feedparser.parse(url, agent="AMLWire/1.0 (+https://amlwire.com)")
+        except requests.exceptions.Timeout:
+            print(f"[RSS] Timeout fetching {name} ({url[:50]})")
+            return []
+        except requests.exceptions.ConnectionError:
+            print(f"[RSS] Connection failed for {name} ({url[:50]})")
+            return []
         for entry in feed.entries:
             title = entry.get("title", "").strip()
             link = entry.get("link", "").strip()
@@ -169,7 +264,7 @@ def _fetch_feed(name: str, url: str, country: str, region: str, cutoff: datetime
                 continue
             if not _is_recent(date_str, cutoff):
                 continue
-            if not _is_aml_relevant(title, summary):
+            if not _is_aml_relevant(title, summary, feed_name=name):
                 continue
 
             articles.append({

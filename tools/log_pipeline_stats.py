@@ -20,6 +20,10 @@ def log_pipeline_stats(
     country_news_count: int = 0,
     rss_count: int = 0,
     gdelt_count: int = 0,
+    scraper_count: int = 0,
+    newsdata_count: int = 0,
+    gnews_count: int = 0,
+    thenewsapi_count: int = 0,
     total_fetched: int = 0,
     total_after_dedup: int = 0,
     total_published: int = 0,
@@ -32,6 +36,7 @@ def log_pipeline_stats(
         print("[Stats] SUPABASE_URL or SUPABASE_SERVICE_KEY not set — skipping stats log")
         return False
 
+    # Core row — columns that exist in the Supabase table
     row = {
         "run_date": date.today().isoformat(),
         "newsapi_count": newsapi_count,
@@ -52,6 +57,8 @@ def log_pipeline_stats(
         print(
             f"[Stats] Logged: NewsAPI={newsapi_count} Tavily={tavily_count} "
             f"Country={country_news_count} RSS={rss_count} GDELT={gdelt_count} "
+            f"Scrapers={scraper_count} NewsData={newsdata_count} "
+            f"GNews={gnews_count} TheNewsAPI={thenewsapi_count} "
             f"| fetched={total_fetched} dedup={total_after_dedup} published={total_published}"
         )
         return True

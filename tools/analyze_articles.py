@@ -36,81 +36,13 @@ SCRAPE_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 
-# Pre-filter: at least ONE multi-word phrase must appear in title+description
-# before the article reaches the AI. Single words ("suspicious", "enforcement",
-# "trial") are intentionally excluded — they match far too broadly.
-_REQUIRED_PHRASES = [
-    # Core AML / financial crime
-    "money laundering", "anti-money laundering", "aml compliance", "aml enforcement",
-    "financial crime", "illicit finance", "illicit funds", "proceeds of crime",
-    "proceeds of fraud", "proceeds of corruption", "illicit proceeds", "criminal proceeds",
-    # Enforcement outcomes
-    "enforcement action", "deferred prosecution", "asset forfeiture", "asset seizure",
-    "compliance failure", "regulatory fine", "aml fine", "aml penalty",
-    "convicted of fraud", "arrested for fraud", "indicted for fraud",
-    "charged with laundering", "convicted of laundering", "guilty of laundering",
-    "fined for aml", "fined for compliance",
-    "wire fraud", "bank fraud", "investment fraud",
-    "confiscation order", "cash seizure", "currency seizure",
-    # Suspicious activity (financial sense only)
-    "suspicious transaction", "suspicious activity report", "suspicious matter report",
-    "sar filing", "smr filing", "suspicious matter",
-    # Typologies — these phrases are unambiguous
-    "structuring", "smurfing", "shell company", "shell companies",
-    "beneficial ownership", "nominee director", "hawala", "trade-based money laundering",
-    "tbml", "pig butchering", "romance scam", "money mule", "mule account",
-    "crypto laundering", "crypto mixing", "sanctions evasion", "sanctions violation",
-    "terrorist financing", "proliferation financing",
-    "unexplained wealth", "predicate offence", "predicate offense",
-    # Compliance / due diligence
-    "know your customer", "kyc", "customer due diligence",
-    "transaction monitoring", "correspondent banking", "de-risking",
-    # Regulators / bodies (their names in context are unambiguous signals)
-    "fatf", "fincen", "austrac", "egmont group", "moneyval",
-    "apg aml", "wolfsberg", "financial intelligence unit", "fiu advisory",
-    "mutual evaluation", "national risk assessment", "pmla",
-    # Specific crime types
-    "kleptocracy", "bribery conviction", "corruption proceeds",
-    "drug trafficking proceeds", "human trafficking proceeds",
-    "ransomware proceeds", "cyber heist", "business email compromise",
-    "deepfake fraud", "synthetic identity",
-]
-
-# Soft-pass keywords for the two-tier filter: articles that fail the hard phrase match
-# but contain these broad keywords get scraped first, then re-checked against _REQUIRED_PHRASES
-_SOFT_PASS_KEYWORDS = [
-    "fraud", "seized", "convicted", "prosecution", "indicted", "arrested",
-    "sentenced", "forfeiture", "confiscated", "laundered", "embezzlement",
-    "bribery", "corruption", "trafficking", "sanctions", "compliance",
-    "regulatory", "enforcement", "penalty", "fine", "bank secrecy",
-]
-
-
-def _passes_pre_filter(article: dict) -> str:
-    """
-    Two-tier pre-filter.
-    Returns: "hard_pass" if AML phrase found in title+description+content,
-             "soft_pass" if broad keyword found (needs scrape then re-check),
-             "drop" if nothing relevant found.
-    """
-    text = (
-        (article.get("title") or "") + " " +
-        (article.get("description") or "") + " " +
-        (article.get("content") or "")
-    ).lower()
-    if any(phrase in text for phrase in _REQUIRED_PHRASES):
-        return "hard_pass"
-    if any(kw in text for kw in _SOFT_PASS_KEYWORDS):
-        return "soft_pass"
-    return "drop"
-
 SYSTEM_PROMPT = """You are a Senior Financial Crime Intelligence Analyst and AML Expert powering AMLWire.com — a specialist intelligence platform for AML compliance professionals, financial crime investigators, and regulators worldwide.
 
 WEBSITE MISSION
 AMLWire.com exists to surface: (1) real enforcement actions and criminal prosecutions with a financial crime angle, (2) emerging money laundering typologies and methods, (3) regulatory publications and FIU advisories, (4) AML compliance failures at institutions. Every article published must be immediately actionable or informative for an AML compliance officer or financial crime investigator. If a compliance professional would look at the article and say "this is not relevant to my work," exclude it.
 
 YOUR FIRST DECISION FOR EVERY ARTICLE IS: INCLUDE or EXCLUDE.
-Be strict. When in doubt, EXCLUDE. It is far better to miss a borderline article than to publish noise.
+Default to INCLUDE if the article has genuine AML, financial crime, or regulatory relevance — even if the connection is indirect. Only EXCLUDE articles that are clearly unrelated to financial crime (sports, lifestyle, physical security, employment law, general politics). It is better to include a borderline-relevant article than to miss a real enforcement action or regulatory development.
 
 TOPIC FILTER — INCLUDE only articles materially related to:
 - Money laundering (any stage: placement, layering, integration)
@@ -420,12 +352,20 @@ REAL EXAMPLES OF ARTICLES YOU MUST EXCLUDE (these actually slipped through befor
 - "Singapore Disputes US Trade Surplus Data as New Tariffs Loom" — trade policy, not TBML
 - "Trump Removes Sanctions on Russian Oil" — geopolitical sanctions policy, not evasion enforcement
 
-MUST INCLUDE — only keep articles that report:
+MUST INCLUDE — keep articles that report ANY of the following:
 - A specific enforcement action, fine, arrest, conviction, or court case with a money laundering / financial crime charge filed
 - A regulatory finding, FATF mutual evaluation, FIU advisory, or published typology study
 - A specific institution penalised for AML/KYC/sanctions compliance failures by a regulator
 - A specific criminal scheme where the financial crime METHOD (placement, layering, integration) is described
 - A regulatory speech, publication, or announcement from FATF, Egmont, AUSTRAC, FinCEN, FCA, MAS, Interpol, or national FIU
+- Fraud, embezzlement, corruption, or financial misconduct cases where proceeds were laundered or where the scheme has clear financial crime relevance
+- International law enforcement reports or assessments on financial crime trends (e.g. Interpol, Europol, UNODC reports)
+- DOJ, SEC, or other regulatory policy changes affecting AML/compliance obligations
+- Extradition cases, asset recovery, or cross-border cooperation in financial crime matters
+- Regional enforcement actions by bodies like India's ED, Nigeria's EFCC, South Africa's FIC/Hawks, etc.
+- AML technology, compliance innovation, or fintech regulatory developments with direct AML implications
+
+When in doubt about a borderline article, INCLUDE it. The curation layer downstream will score and rank articles by quality — your job is to avoid false negatives (missing real AML stories), not to be the quality gate.
 
 Return ALL qualifying articles — do not cap or trim the list.
 """
@@ -718,49 +658,10 @@ def analyze_articles(articles: list[dict], backfill_mode: bool = False) -> list[
     if not articles:
         return []
 
-    # Two-tier pre-filter with audit logging
-    from tools.audit_logger import log_prefilter_drop
-
-    hard_pass = []
-    soft_pass = []
-    dropped_articles = []
-    for a in articles:
-        result = _passes_pre_filter(a)
-        if result == "hard_pass":
-            hard_pass.append(a)
-        elif result == "soft_pass":
-            soft_pass.append(a)
-        else:
-            dropped_articles.append(a)
-            log_prefilter_drop(a, "No AML phrase or broad keyword found")
-
-    # Soft-pass articles: scrape first, then re-check against _REQUIRED_PHRASES
-    if soft_pass:
-        print(f"[Analyze] Soft-pass: scraping {len(soft_pass)} borderline articles for re-check...")
-        soft_pass = _scrape_batch(soft_pass)
-        promoted = []
-        for a in soft_pass:
-            scraped_text = (a.get("_scraped_text") or "").lower()
-            if any(phrase in scraped_text for phrase in _REQUIRED_PHRASES):
-                promoted.append(a)
-                print(f"  [Pre-filter] Promoted after scrape: {a.get('title', '')[:60]}")
-            else:
-                log_prefilter_drop(a, "Soft-pass failed: no AML phrase in scraped text")
-        hard_pass.extend(promoted)
-        print(f"[Analyze] Soft-pass promoted {len(promoted)}/{len(soft_pass)} articles")
-
-    if dropped_articles:
-        print(f"[Analyze] Pre-filter dropped {len(dropped_articles)}/{len(articles)} articles")
-        for a in dropped_articles[:5]:
-            print(f"  - {a.get('title', '')[:70]}")
-        if len(dropped_articles) > 5:
-            print(f"  ... and {len(dropped_articles) - 5} more")
-    print(f"[Analyze] {len(hard_pass)}/{len(articles)} articles passed pre-filter")
-    articles = hard_pass
-
-    if not articles:
-        print("[Analyze] No articles passed pre-filter.")
-        return []
+    # Pre-filter removed — all articles go to AI. The AI prompt has detailed
+    # INCLUDE/EXCLUDE rules, and the curation tier system handles quality ranking.
+    # Previously this gate was dropping 60%+ of articles before AI saw them.
+    print(f"[Analyze] Sending all {len(articles)} articles to AI (no pre-filter)")
 
     client = OpenAI(
         api_key=OPENROUTER_API_KEY,

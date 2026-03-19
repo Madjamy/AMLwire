@@ -47,6 +47,12 @@ GDELT_QUERIES = [
     '"sanctions evasion" enforcement',
     '"OFAC" sanctions designation',
     '"UN sanctions" enforcement designation',
+
+    # Additional country coverage
+    '"money laundering" Canada FINTRAC enforcement',
+    '"money laundering" Japan financial crime enforcement',
+    '"money laundering" "European Union" AMLA enforcement',
+    '"money laundering" "South Africa" FIC enforcement',
 ]
 
 

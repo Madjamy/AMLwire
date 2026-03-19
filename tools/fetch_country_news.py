@@ -16,86 +16,119 @@ NEWSAPI_URL = "https://newsapi.org/v2/everything"
 
 TOP_N = 5  # Articles to return per country
 
-COUNTRY_QUERIES = {
-    "Australia": [
-        "Australia AUSTRAC money laundering",
-        "Australian AML financial crime enforcement",
-        "Australia sanctions compliance",
-        "ASIC Australia financial crime fraud enforcement",
-        "Australian Federal Police money laundering",
-        "APRA Australia banking compliance penalty",
-        "Australia court convicted laundering fraud proceeds",
-    ],
-    "USA": [
-        "US FinCEN OFAC money laundering enforcement",
-        "American AML financial crime",
-        "United States sanctions violation",
-    ],
-    "UK": [
-        "UK FCA NCA money laundering enforcement",
-        "Britain AML financial crime",
-        "UK sanctions evasion",
-    ],
-    "India": [
-        "India Enforcement Directorate money laundering PMLA",
-        "Indian AML financial crime",
-        "India ED hawala sanctions",
-    ],
-    "Singapore": [
-        "Singapore MAS CAD money laundering enforcement",
-        "Singapore AML financial crime",
-        "Singapore sanctions compliance",
-    ],
-    "UAE": [
-        "UAE CBUAE Dubai money laundering enforcement",
-        "UAE AML financial crime",
-        "Dubai sanctions evasion",
-    ],
-    "Japan": [
-        "Japan money laundering financial crime enforcement",
-        "Japan JAFIC AML anti-money laundering",
-    ],
-    "Hong Kong": [
-        "Hong Kong money laundering JFIU enforcement",
-        "Hong Kong SFC HKMA AML financial crime",
-    ],
-    "Malaysia": [
-        "Malaysia money laundering BNM AML enforcement",
-        "Malaysia financial crime AMLA",
-    ],
-    "South Korea": [
-        "South Korea money laundering KoFIU AML enforcement",
-        "Korea financial crime anti-money laundering",
-    ],
-    "China": [
-        "China money laundering financial crime enforcement",
-        "China AML anti-money laundering PBC",
-    ],
-    "Indonesia": [
-        "Indonesia money laundering PPATK enforcement",
-        "Indonesia financial crime AML",
-    ],
-    "EU": [
-        "European Union AML enforcement AMLA money laundering",
-        "EU financial crime anti-money laundering directive",
-    ],
-    "Germany": [
-        "Germany money laundering AML BaFin enforcement",
-        "Germany financial crime Geldwäsche",
-    ],
-    "Canada": [
-        "Canada FINTRAC money laundering enforcement",
-        "Canada AML financial crime penalty",
-    ],
-    "South Africa": [
-        "South Africa money laundering FIC enforcement",
-        "South Africa AML financial crime FATF",
-    ],
-    "Nigeria": [
-        "Nigeria money laundering EFCC enforcement",
-        "Nigeria financial crime AML",
-    ],
+# ─── Key-to-Country Mapping ──────────────────────────────────────────────────
+# Each NewsAPI key handles DIFFERENT country groups. No overlap = no wasted quota.
+# Key index 0 = KEY_1, index 1 = KEY_2, etc.
+KEY_COUNTRY_MAP = {
+    0: {  # Key 1 → Australia + New Zealand
+        "Australia": [
+            "Australia AUSTRAC money laundering",
+            "Australian AML financial crime enforcement",
+            "Australia sanctions compliance",
+            "ASIC Australia financial crime fraud enforcement",
+            "Australian Federal Police money laundering",
+            "APRA Australia banking compliance penalty",
+            "Australia court convicted laundering fraud proceeds",
+        ],
+        "New Zealand": [
+            "New Zealand AML financial crime enforcement",
+            "New Zealand money laundering FIU",
+        ],
+    },
+    1: {  # Key 2 → USA + Canada + EU + Germany
+        "USA": [
+            "US FinCEN OFAC money laundering enforcement",
+            "American AML financial crime",
+            "United States sanctions violation",
+        ],
+        "Canada": [
+            "Canada FINTRAC money laundering enforcement",
+            "Canada AML financial crime penalty",
+        ],
+        "EU": [
+            "European Union AML enforcement AMLA money laundering",
+            "EU financial crime anti-money laundering directive",
+        ],
+        "Germany": [
+            "Germany money laundering AML BaFin enforcement",
+        ],
+        "USA_extra": [
+            "SEC financial crime fraud enforcement",
+            "DOJ money laundering prosecution",
+        ],
+    },
+    2: {  # Key 3 → UK + India + South Africa + Nigeria
+        "UK": [
+            "UK FCA NCA money laundering enforcement",
+            "Britain AML financial crime",
+            "UK sanctions evasion",
+        ],
+        "India": [
+            "India Enforcement Directorate money laundering PMLA",
+            "Indian AML financial crime",
+            "India ED hawala sanctions",
+        ],
+        "South Africa": [
+            "South Africa money laundering FIC enforcement",
+            "South Africa AML financial crime FATF",
+        ],
+        "Nigeria": [
+            "Nigeria money laundering EFCC enforcement",
+            "Nigeria financial crime AML",
+        ],
+        "UK_extra": [
+            "SFO UK Serious Fraud Office prosecution",
+        ],
+        "India_extra": [
+            "India RBI financial crime compliance",
+        ],
+    },
+    3: {  # Key 4 → Asia-Pacific + Middle East
+        "Singapore": [
+            "Singapore MAS CAD money laundering enforcement",
+            "Singapore AML financial crime",
+            "Singapore sanctions compliance",
+        ],
+        "UAE": [
+            "UAE CBUAE Dubai money laundering enforcement",
+            "UAE AML financial crime",
+            "Dubai sanctions evasion",
+        ],
+        "Japan": [
+            "Japan money laundering financial crime enforcement",
+            "Japan JAFIC AML anti-money laundering",
+        ],
+        "Hong Kong": [
+            "Hong Kong money laundering JFIU enforcement",
+            "Hong Kong SFC HKMA AML financial crime",
+        ],
+        "Malaysia": [
+            "Malaysia money laundering BNM AML enforcement",
+            "Malaysia financial crime AMLA",
+        ],
+        "South Korea": [
+            "South Korea money laundering KoFIU AML enforcement",
+            "Korea financial crime anti-money laundering",
+        ],
+        "China": [
+            "China money laundering financial crime enforcement",
+        ],
+        "Indonesia": [
+            "Indonesia money laundering PPATK enforcement",
+        ],
+    },
 }
+
+# Flatten for backward compatibility — combined view of all countries
+COUNTRY_QUERIES = {}
+for _key_idx, _countries in KEY_COUNTRY_MAP.items():
+    for _country, _queries in _countries.items():
+        # Normalize "USA_extra" -> "USA", "UK_extra" -> "UK" etc.
+        _base_country = _country.replace("_extra", "")
+        if _base_country in COUNTRY_QUERIES:
+            COUNTRY_QUERIES[_base_country].extend(_queries)
+        else:
+            COUNTRY_QUERIES[_base_country] = list(_queries)
 
 TOPIC_KEYWORDS = [
     "money laundering", "aml", "anti-money laundering", "sanctions", "tax evasion",
@@ -117,81 +150,93 @@ def _is_relevant(text: str) -> bool:
     return any(kw in text for kw in TOPIC_KEYWORDS)
 
 
-def _newsapi_fetch(query: str, from_date: str, country: str) -> list[dict]:
-    """Fetch from NewsAPI for a specific country query. Returns raw article dicts."""
-    if not NEWSAPI_KEYS:
+def _newsapi_fetch(query: str, from_date: str, country: str, api_key: str) -> list[dict]:
+    """Fetch from NewsAPI for a specific country query using a specific key."""
+    if not api_key:
         return []
-    for key in NEWSAPI_KEYS:
-        try:
-            params = {
-                "q": query,
-                "from": from_date,
-                "sortBy": "publishedAt",
-                "language": "en",
-                "pageSize": 10,
-                "apiKey": key,
-            }
-            resp = requests.get(NEWSAPI_URL, params=params, timeout=15)
-            if resp.status_code == 429:
+    try:
+        params = {
+            "q": query,
+            "from": from_date,
+            "sortBy": "publishedAt",
+            "language": "en",
+            "pageSize": 10,
+            "apiKey": api_key,
+        }
+        resp = requests.get(NEWSAPI_URL, params=params, timeout=15)
+        if resp.status_code == 429:
+            return []
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("code") == "rateLimited":
+            return []
+        articles = []
+        for a in data.get("articles", []):
+            url = a.get("url", "")
+            text = (a.get("title", "") + " " + a.get("description", "")).lower()
+            if not url or not _is_relevant(text):
                 continue
-            resp.raise_for_status()
-            data = resp.json()
-            if data.get("code") == "rateLimited":
-                continue
-            articles = []
-            for a in data.get("articles", []):
-                url = a.get("url", "")
-                text = (a.get("title", "") + " " + a.get("description", "")).lower()
-                if not url or not _is_relevant(text):
-                    continue
-                articles.append({
-                    "title": a.get("title", ""),
-                    "url": url,
-                    "source": a.get("source", {}).get("name", ""),
-                    "published_at": a.get("publishedAt", ""),
-                    "description": a.get("description", ""),
-                    "content": a.get("content", ""),
-                    "api_source": "newsapi",
-                    "country": country,
-                })
-            return articles
-        except Exception as e:
-            print(f"[CountryFetch][NewsAPI] Error for '{country}': {e}")
-    return []
+            articles.append({
+                "title": a.get("title", ""),
+                "url": url,
+                "source": a.get("source", {}).get("name", ""),
+                "published_at": a.get("publishedAt", ""),
+                "description": a.get("description", ""),
+                "content": a.get("content", ""),
+                "api_source": "newsapi",
+                "country": country,
+            })
+        return articles
+    except Exception as e:
+        print(f"[CountryFetch][NewsAPI] Error for '{country}': {e}")
+        return []
 
 
 def fetch_country_articles() -> list[dict]:
     """
     Fetch top 5 AML articles per priority country.
-    Uses NewsAPI only. Returns combined list tagged with 'country' field.
-    Returns combined list tagged with 'country' field.
+    Each NewsAPI key handles its own assigned country group — no overlap.
     """
     from_date = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
     all_results = []
     seen_urls = set()
 
-    for country, queries in COUNTRY_QUERIES.items():
-        country_articles = []
-        country_seen = set()
+    for key_idx, countries in KEY_COUNTRY_MAP.items():
+        # Get the API key for this group
+        if key_idx >= len(NEWSAPI_KEYS):
+            print(f"[CountryFetch] No key for group {key_idx + 1} -- skipping {len(countries)} countries")
+            continue
+        api_key = NEWSAPI_KEYS[key_idx]
+        key_rate_limited = False
 
-        # Try each query via NewsAPI
-        for query in queries:
-            if len(country_articles) >= TOP_N:
+        for country_raw, queries in countries.items():
+            if key_rate_limited:
                 break
-            fetched = _newsapi_fetch(query, from_date, country)
-            for a in fetched:
-                if a["url"] not in country_seen and a["url"] not in seen_urls:
-                    country_seen.add(a["url"])
-                    country_articles.append(a)
+            # Normalize "USA_extra" -> "USA"
+            country = country_raw.replace("_extra", "")
+            country_articles = []
+            country_seen = set()
+
+            for query in queries:
                 if len(country_articles) >= TOP_N:
                     break
+                fetched = _newsapi_fetch(query, from_date, country, api_key)
+                if not fetched and len(country_articles) == 0:
+                    # Might be rate limited — check with a simple test
+                    pass
+                for a in fetched:
+                    if a["url"] not in country_seen and a["url"] not in seen_urls:
+                        country_seen.add(a["url"])
+                        country_articles.append(a)
+                    if len(country_articles) >= TOP_N:
+                        break
 
-        # Take top N, mark all their URLs as globally seen
-        top = country_articles[:TOP_N]
-        for a in top:
-            seen_urls.add(a["url"])
-        all_results.extend(top)
-        print(f"[CountryFetch] {country}: {len(top)} articles")
+            top = country_articles[:TOP_N]
+            for a in top:
+                seen_urls.add(a["url"])
+            all_results.extend(top)
+            if top:
+                print(f"[CountryFetch] {country} (key {key_idx + 1}): {len(top)} articles")
 
     print(f"[CountryFetch] Total: {len(all_results)} country-specific articles")
     return all_results
