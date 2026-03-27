@@ -1,11 +1,11 @@
 """
-Analyze and summarize AML articles using OpenRouter (Grok via OpenAI-compatible API).
+Analyze and summarize AML articles using OpenRouter (MiMo via OpenAI-compatible API).
 Returns structured JSON with: title, date, region, source, url, summary, aml_typology, modus_operandi.
 
 Pipeline:
   1. Scrape full article text from URL (BeautifulSoup)
-  2. Send scraped text + metadata to Grok for structured analysis
-  3. Grok returns JSON with typology, MO, summary, tags, date correction
+  2. Send scraped text + metadata to MiMo for structured analysis
+  3. MiMo returns JSON with typology, MO, summary, tags, date correction
 """
 
 import os
@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "x-ai/grok-4.1-fast")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "xiaomi/mimo-v2-pro")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 SCRAPE_TIMEOUT = 15  # seconds per article scrape (increased from 10)
@@ -649,7 +649,7 @@ def _recover_json_articles(raw: str) -> list[dict]:
 
 def analyze_articles(articles: list[dict], backfill_mode: bool = False) -> list[dict]:
     """
-    Scrape full article text, then send to Grok in batches for structured analysis.
+    Scrape full article text, then send to MiMo in batches for structured analysis.
     Returns a list of structured dicts ready for Supabase upload.
     backfill_mode: if True, relaxes 14-day date filter to accept 2025-2026 articles.
     """
@@ -682,7 +682,7 @@ def analyze_articles(articles: list[dict], backfill_mode: bool = False) -> list[
         # Step 1: scrape full text for each article
         batch = _scrape_batch(batch)
 
-        # Step 2: send to Grok with retry logic
+        # Step 2: send to MiMo with retry logic
         print(f"[Analyze] Sending batch {batch_num} to {OPENROUTER_MODEL}...")
         results = _call_ai(client, batch, current_date, backfill_mode=backfill_mode)
 

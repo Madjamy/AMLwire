@@ -27,7 +27,7 @@ if hasattr(sys.stdout, "reconfigure"):
 load_dotenv()
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "x-ai/grok-4.1-fast")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "xiaomi/mimo-v2-pro")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 _SCRAPE_HEADERS = {

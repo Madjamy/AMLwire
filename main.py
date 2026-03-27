@@ -316,7 +316,7 @@ def run_pipeline():
 
         # Step 14: AI Analysis (with full article scraping)
         report_data["ai_processed"] = len(clean_articles)
-        log.info(f"Step 14/{TOTAL_STEPS} -- AI analysis of {len(clean_articles)} articles (Grok 4.1 Fast + full scrape)...")
+        log.info(f"Step 14/{TOTAL_STEPS} -- AI analysis of {len(clean_articles)} articles (MiMo-V2-Pro + full scrape)...")
         try:
             from tools.analyze_articles import analyze_articles
             analyzed = analyze_articles(clean_articles)
