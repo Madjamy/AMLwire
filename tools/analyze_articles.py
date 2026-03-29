@@ -23,6 +23,26 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "xiaomi/mimo-v2-pro")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
+# Canonical country names — applied post-AI to fix inconsistencies
+COUNTRY_NORMALIZE = {
+    "USA": "United States", "US": "United States", "U.S.": "United States",
+    "U.S.A.": "United States", "America": "United States",
+    "UK": "United Kingdom", "U.K.": "United Kingdom",
+    "Britain": "United Kingdom", "England": "United Kingdom",
+    "United Arab Emirates": "UAE", "Dubai": "UAE", "Abu Dhabi": "UAE",
+    "Hong Kong SAR": "Hong Kong",
+    "Republic of Korea": "South Korea", "Korea": "South Korea",
+    "PRC": "China", "Mainland China": "China",
+}
+
+
+def normalise_country(country: str | None) -> str | None:
+    """Normalise country name to canonical form."""
+    if not country:
+        return country
+    return COUNTRY_NORMALIZE.get(country.strip(), country.strip())
+
+
 SCRAPE_TIMEOUT = 15  # seconds per article scrape (increased from 10)
 SCRAPE_MAX_RETRIES = 3
 SCRAPE_USER_AGENTS = [
@@ -178,7 +198,14 @@ CATEGORY RULE
 - Set category = "news" for "AML News" or "AML compliance failure"
 
 COUNTRY/REGION RULE
-- country: the most specific country identified (e.g. "Australia", "India", "United States"). If multiple countries, pick the primary one where the crime/enforcement occurred. If unclear, set to null.
+- country: the most specific country identified. If multiple countries, pick the primary one where the crime/enforcement occurred. If unclear, set to null.
+- MANDATORY canonical country names (always use these exact forms):
+    "United States" (never "USA", "US", "U.S.", "America")
+    "United Kingdom" (never "UK", "Britain", "England")
+    "UAE" (never "United Arab Emirates", "Dubai", "Abu Dhabi")
+    "South Korea" (never "Korea", "Republic of Korea")
+    "China" (never "PRC", "Mainland China")
+    "Hong Kong" (never "Hong Kong SAR")
 - region: MUST be exactly one of these values (no other values allowed):
     "Americas" — for USA, Canada, Latin America, Caribbean
     "Europe" — for UK, EU, Switzerland, Eastern Europe
@@ -602,6 +629,8 @@ def _call_ai(client, articles: list[dict], current_date: str, backfill_mode: boo
         for item in result:
             if "aml_typology" in item:
                 item["aml_typology"] = _normalise_typology(item["aml_typology"])
+            if "country" in item:
+                item["country"] = normalise_country(item.get("country"))
         return result
 
     except json.JSONDecodeError as e:
@@ -614,6 +643,8 @@ def _call_ai(client, articles: list[dict], current_date: str, backfill_mode: boo
             for item in recovered:
                 if "aml_typology" in item:
                     item["aml_typology"] = _normalise_typology(item["aml_typology"])
+                if "country" in item:
+                    item["country"] = normalise_country(item.get("country"))
         return recovered
     except Exception as e:
         print(f"[Analyze] OpenRouter API error: {e}")

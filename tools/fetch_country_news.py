@@ -44,6 +44,9 @@ KEY_COUNTRY_MAP = {
         "Canada": [
             "Canada FINTRAC money laundering enforcement",
             "Canada AML financial crime penalty",
+            "Canada RCMP proceeds of crime laundering",
+            "Canada OSFI sanctions compliance enforcement",
+            "Canada court convicted fraud laundering",
         ],
         "EU": [
             "European Union AML enforcement AMLA money laundering",
@@ -51,6 +54,14 @@ KEY_COUNTRY_MAP = {
         ],
         "Germany": [
             "Germany money laundering AML BaFin enforcement",
+            "Germany financial crime fraud prosecution",
+        ],
+        "France": [
+            "France Tracfin money laundering enforcement",
+            "France AML financial crime",
+        ],
+        "Switzerland": [
+            "Switzerland FINMA money laundering enforcement",
         ],
         "USA_extra": [
             "SEC financial crime fraud enforcement",
@@ -88,11 +99,15 @@ KEY_COUNTRY_MAP = {
             "Singapore MAS CAD money laundering enforcement",
             "Singapore AML financial crime",
             "Singapore sanctions compliance",
+            "Singapore court convicted laundering fraud",
+            "Singapore STRO suspicious transaction report",
         ],
         "UAE": [
             "UAE CBUAE Dubai money laundering enforcement",
             "UAE AML financial crime",
             "Dubai sanctions evasion",
+            "ADGM DFSA financial crime enforcement",
+            "UAE FATF mutual evaluation compliance",
         ],
         "Japan": [
             "Japan money laundering financial crime enforcement",

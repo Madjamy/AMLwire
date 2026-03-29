@@ -38,26 +38,55 @@ COUNTRY_MAP = {
     "au": "Australia",
     "pk": "Pakistan",
     "ph": "Philippines",
+    "gb": "United Kingdom",
+    "ca": "Canada",
+    "de": "Germany",
+    "fr": "France",
 }
 
-# Query plan: 2 queries per country, each costs 1 credit = ~16 credits/day
+# Max articles per country from NewsData (prevents India domination)
+COUNTRY_MAX = {
+    "in": 5,   # India: was returning 100+ uncapped
+}
+DEFAULT_COUNTRY_MAX = 10
+
+# Query plan: ~22 credits/day (of 200 quota)
 NEWSDATA_QUERIES = [
-    {"country": "in", "q": "money laundering OR enforcement directorate"},
-    {"country": "in", "q": "financial fraud OR PMLA OR hawala"},
+    # India — tightened queries, AML-specific only
+    {"country": "in", "q": "money laundering OR enforcement directorate PMLA"},
+    {"country": "in", "q": "hawala OR terror financing OR ED arrest"},
+    # Singapore
     {"country": "sg", "q": "money laundering OR MAS enforcement"},
     {"country": "sg", "q": "financial crime OR fraud arrest"},
+    # UAE
     {"country": "ae", "q": "money laundering OR sanctions OR CBUAE"},
     {"country": "ae", "q": "financial crime OR fraud Dubai"},
+    # Japan
     {"country": "jp", "q": "money laundering OR financial crime"},
     {"country": "jp", "q": "fraud OR JAFIC enforcement"},
+    # Malaysia
     {"country": "my", "q": "money laundering OR BNM"},
+    # Indonesia
     {"country": "id", "q": "money laundering OR PPATK"},
+    # Nigeria
     {"country": "ng", "q": "money laundering OR EFCC"},
+    # South Africa
     {"country": "za", "q": "money laundering OR FIC"},
+    # Australia
     {"country": "au", "q": "money laundering OR AUSTRAC"},
     {"country": "au", "q": "fraud OR financial crime Australia"},
+    # Pakistan
     {"country": "pk", "q": "money laundering OR financial crime"},
+    # Philippines
     {"country": "ph", "q": "money laundering OR AMLC"},
+    # UK
+    {"country": "gb", "q": "money laundering OR FCA enforcement"},
+    # Canada
+    {"country": "ca", "q": "money laundering OR FINTRAC enforcement"},
+    # Germany
+    {"country": "de", "q": "money laundering OR BaFin enforcement"},
+    # France
+    {"country": "fr", "q": "money laundering OR Tracfin enforcement"},
 ]
 
 
@@ -74,11 +103,16 @@ def fetch_newsdata_articles() -> list[dict]:
 
     seen_urls: set[str] = set()
     results: list[dict] = []
+    country_article_counts: dict[str, int] = {}
 
     print(f"[NewsData] Running {len(NEWSDATA_QUERIES)} queries with crime category filter...")
     for spec in NEWSDATA_QUERIES:
         country_code = spec["country"]
         country_name = COUNTRY_MAP.get(country_code, country_code.upper())
+        max_for_country = COUNTRY_MAX.get(country_code, DEFAULT_COUNTRY_MAX)
+        if country_article_counts.get(country_code, 0) >= max_for_country:
+            print(f"  [NewsData] {country_name} hit cap ({max_for_country}), skipping remaining queries")
+            continue
         try:
             params = {
                 "apikey": NEWSDATA_API_KEY,
@@ -109,7 +143,10 @@ def fetch_newsdata_articles() -> list[dict]:
                     continue
                 if not _is_relevant(title + " " + desc):
                     continue
+                if country_article_counts.get(country_code, 0) >= max_for_country:
+                    break
                 seen_urls.add(url)
+                country_article_counts[country_code] = country_article_counts.get(country_code, 0) + 1
                 # Parse date: NewsData returns "YYYY-MM-DD HH:MM:SS" format
                 pub_date = (a.get("pubDate") or "")[:10]
                 results.append({

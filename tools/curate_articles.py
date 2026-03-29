@@ -19,24 +19,79 @@ This runs AFTER AI analysis and BEFORE upload.
 import os
 from collections import defaultdict
 
+# ─── Country normalization (must match analyze_articles.py) ───────────────────
+COUNTRY_NORMALIZE = {
+    "USA": "United States", "US": "United States", "U.S.": "United States",
+    "U.S.A.": "United States", "America": "United States",
+    "UK": "United Kingdom", "U.K.": "United Kingdom",
+    "Britain": "United Kingdom", "England": "United Kingdom",
+    "United Arab Emirates": "UAE", "Dubai": "UAE", "Abu Dhabi": "UAE",
+    "Hong Kong SAR": "Hong Kong",
+    "Republic of Korea": "South Korea", "Korea": "South Korea",
+    "PRC": "China", "Mainland China": "China",
+}
+
+
+def _normalise_country(country: str | None) -> str:
+    if not country:
+        return "Unknown"
+    c = country.strip()
+    return COUNTRY_NORMALIZE.get(c, c)
+
+
 # ─── Country caps ──────────────────────────────────────────────────────────────
 COUNTRY_CAPS = {
-    "USA":            5,
     "United States":  5,
-    "UK":             5,
     "United Kingdom": 5,
     "Australia":      8,
     "Japan":          5,
     "Singapore":      5,
     "India":          5,
     "UAE":            5,
+    "Canada":         5,
 }
 DEFAULT_CAP = 2
 
-MAX_TOTAL = int(os.getenv("CURATION_MAX_TOTAL", "40"))
+MAX_TOTAL = int(os.getenv("CURATION_MAX_TOTAL", "45"))  # raised from 40 to accommodate region floors
 
 # Articles scoring at or above this threshold bypass the country cap
 CAP_OVERRIDE_THRESHOLD = 55
+
+# ─── Region floor guarantees ─────────────────────────────────────────────────
+# Minimum articles per region per run. If below floor after curation,
+# pull in highest-scoring articles from that region.
+REGION_MAP = {
+    "Australia": {"Australia"},
+    "APAC": {"Singapore", "India", "Japan", "Hong Kong", "Malaysia", "South Korea",
+             "China", "Indonesia", "Philippines", "New Zealand", "Thailand", "Taiwan",
+             "Vietnam", "Bangladesh", "Pakistan", "Sri Lanka", "Myanmar", "Cambodia", "Nepal"},
+    "Europe": {"United Kingdom", "Germany", "France", "Netherlands", "Switzerland",
+               "Sweden", "Denmark", "Italy", "Spain", "Ireland", "Belgium", "Austria",
+               "Luxembourg", "Norway", "Finland", "Estonia", "Latvia", "Lithuania",
+               "European Union", "EU", "Greece", "Portugal", "Poland", "Romania", "Cyprus", "Malta"},
+    "Americas": {"United States", "Canada"},
+    "MENA": {"UAE", "Saudi Arabia", "Qatar", "Bahrain", "Kuwait", "Oman",
+             "Israel", "Lebanon", "Jordan", "Egypt", "Turkey", "Iran", "Iraq"},
+    "Africa": {"South Africa", "Nigeria", "Kenya", "Ghana", "Tanzania", "Uganda",
+               "Zimbabwe", "Mozambique", "Zambia", "Namibia", "Botswana", "Mauritius"},
+}
+
+REGION_FLOORS = {
+    "Australia": 2,
+    "APAC": 3,
+    "Europe": 3,
+    "Americas": 3,
+    "MENA": 2,
+    "Africa": 1,
+}
+
+
+def _get_region(country: str) -> str | None:
+    """Return region name for a country, or None."""
+    for region, countries in REGION_MAP.items():
+        if country in countries:
+            return region
+    return None
 
 # ─── Typology classification sets ──────────────────────────────────────────────
 
@@ -87,7 +142,7 @@ MAJOR_AUTHORITIES = {
     "asic", "sfo", "serious fraud office", "afp", "fbi",
 }
 
-PRIORITY_COUNTRIES = {"Australia", "United Kingdom", "UK", "India"}
+PRIORITY_COUNTRIES = {"Australia", "United Kingdom", "India", "Singapore", "UAE", "Canada"}
 
 # Keywords for institutional significance scoring (checked in title + summary)
 SIGNIFICANCE_KEYWORDS_HIGH = {
@@ -222,6 +277,10 @@ def curate_articles(articles: list[dict]) -> list[dict]:
     if not articles:
         return []
 
+    # Normalise country names before scoring
+    for article in articles:
+        article["country"] = _normalise_country(article.get("country"))
+
     # Score and tier every article
     for article in articles:
         article["quality_score"] = score_article(article)
@@ -232,17 +291,19 @@ def curate_articles(articles: list[dict]) -> list[dict]:
 
     country_counts: dict[str, int] = defaultdict(int)
     curated = []
+    curated_urls = set()
     overflow_high_score = []  # High-scoring articles blocked by cap
 
     for article in sorted_articles:
         if len(curated) >= MAX_TOTAL:
             break
 
-        country = (article.get("country") or "Unknown").strip()
+        country = article.get("country", "Unknown")
         cap = COUNTRY_CAPS.get(country, DEFAULT_CAP)
 
         if country_counts[country] < cap:
             curated.append(article)
+            curated_urls.add(article.get("source_url") or article.get("url", ""))
             country_counts[country] += 1
         elif article["quality_score"] >= CAP_OVERRIDE_THRESHOLD:
             overflow_high_score.append(article)
@@ -252,8 +313,43 @@ def curate_articles(articles: list[dict]) -> list[dict]:
         if len(curated) >= MAX_TOTAL:
             break
         curated.append(article)
-        country = (article.get("country") or "Unknown").strip()
+        curated_urls.add(article.get("source_url") or article.get("url", ""))
+        country = article.get("country", "Unknown")
         country_counts[country] += 1
+
+    # ── Region floor enforcement ──────────────────────────────────────────────
+    # Check if any region is below its minimum floor; if so, pull from sorted_articles
+    region_counts: dict[str, int] = defaultdict(int)
+    for a in curated:
+        region = _get_region(a.get("country", ""))
+        if region:
+            region_counts[region] += 1
+
+    floor_additions = 0
+    for region, floor in REGION_FLOORS.items():
+        current = region_counts.get(region, 0)
+        if current >= floor:
+            continue
+        needed = floor - current
+        # Find articles from this region not yet in curated
+        candidates = [
+            a for a in sorted_articles
+            if _get_region(a.get("country", "")) == region
+            and (a.get("source_url") or a.get("url", "")) not in curated_urls
+        ]
+        for a in candidates[:needed]:
+            curated.append(a)
+            curated_urls.add(a.get("source_url") or a.get("url", ""))
+            country_counts[a.get("country", "Unknown")] = country_counts.get(a.get("country", "Unknown"), 0) + 1
+            region_counts[region] = region_counts.get(region, 0) + 1
+            floor_additions += 1
+
+    if floor_additions:
+        print(f"[Curate] Region floors: added {floor_additions} articles to meet minimum regional coverage")
+        for region, floor in REGION_FLOORS.items():
+            actual = region_counts.get(region, 0)
+            if actual < floor:
+                print(f"[Curate] WARNING: {region} has {actual}/{floor} articles (not enough candidates)")
 
     # ── Logging ────────────────────────────────────────────────────────────
     total_dropped = len(articles) - len(curated)
