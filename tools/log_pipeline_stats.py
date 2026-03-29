@@ -24,6 +24,7 @@ def log_pipeline_stats(
     newsdata_count: int = 0,
     gnews_count: int = 0,
     thenewsapi_count: int = 0,
+    discovery_count: int = 0,
     total_fetched: int = 0,
     total_after_dedup: int = 0,
     total_published: int = 0,
@@ -59,6 +60,7 @@ def log_pipeline_stats(
             f"Country={country_news_count} RSS={rss_count} GDELT={gdelt_count} "
             f"Scrapers={scraper_count} NewsData={newsdata_count} "
             f"GNews={gnews_count} TheNewsAPI={thenewsapi_count} "
+            f"Discovery={discovery_count} "
             f"| fetched={total_fetched} dedup={total_after_dedup} published={total_published}"
         )
         return True

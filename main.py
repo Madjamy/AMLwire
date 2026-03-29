@@ -10,15 +10,16 @@ Daily pipeline:
   7.  NewsData.io (crime category + country filter)
   8.  GNews (AU/UK/CA via Google News)
   9.  TheNewsAPI (precision AND/OR/NOT queries)
-  10. Drop articles with no publish date or older than 14 days
-  11. Title-similarity dedup (catch syndicated articles)
-  12. Save all candidates to articles_staging (audit trail)
-  13. Deduplicate (within batch + against Supabase articles table)
-  14. AI analysis -- filter, summarise, extract typology + modus operandi (with full scrape)
-  15. Curation -- country cap (USA/UK/AU/JP/SG/IN/UAE≤5, others≤2), quality rank, max 40
-  16. Upload articles to Supabase articles table (final/published)
-  17. Generate + upload typology summaries
-  18. Send Telegram daily report (stats, top articles, alerts)
+  10. AI Discovery -- MiMo identifies top global stories, Tavily verifies (catches keyword gaps)
+  11. Drop articles with no publish date or older than 14 days
+  12. Title-similarity dedup (catch syndicated articles)
+  13. Save all candidates to articles_staging (audit trail)
+  14. Deduplicate (within batch + against Supabase articles table)
+  15. AI analysis -- filter, summarise, extract typology + modus operandi (with full scrape)
+  16. Curation -- country cap (USA/UK/AU/JP/SG/IN/UAE≤5, others≤2), quality rank, max 40
+  17. Upload articles to Supabase articles table (final/published)
+  18. Generate + upload typology summaries
+  19. Send Telegram daily report (stats, top articles, alerts)
 
 Usage:
     python main.py
@@ -44,7 +45,7 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-TOTAL_STEPS = 18
+TOTAL_STEPS = 19
 
 
 def _normalise_title(title: str) -> str:
@@ -179,6 +180,22 @@ def run_pipeline():
             thenewsapi_articles = []
             report_data["alerts"].append(f"TheNewsAPI failed: {e}")
 
+        # Step 10: AI Discovery — find stories that keyword search missed
+        log.info(f"Step 10/{TOTAL_STEPS} -- AI Discovery (MiMo + Tavily)...")
+        try:
+            from tools.fetch_ai_discovery import fetch_ai_discovery
+            _existing_urls = {a.get("url", "") for a in (
+                newsapi_articles + tavily_articles + country_articles + rss_articles
+                + gdelt_articles + scraper_articles + newsdata_articles
+                + gnews_articles + thenewsapi_articles
+            )}
+            discovery_articles = fetch_ai_discovery(existing_urls=_existing_urls)
+            log.info(f"  AI Discovery: {len(discovery_articles)} new articles")
+        except Exception as e:
+            log.error(f"  AI Discovery failed: {e}")
+            discovery_articles = []
+            report_data["alerts"].append(f"AI Discovery failed: {e}")
+
         # Capture per-source counts before any filtering (for stats logging)
         _stats_newsapi = len(newsapi_articles)
         _stats_tavily = len(tavily_articles)
@@ -189,6 +206,7 @@ def run_pipeline():
         _stats_newsdata = len(newsdata_articles)
         _stats_gnews = len(gnews_articles)
         _stats_thenewsapi = len(thenewsapi_articles)
+        _stats_discovery = len(discovery_articles)
 
         report_data["source_counts"] = {
             "NewsAPI": _stats_newsapi,
@@ -200,6 +218,7 @@ def run_pipeline():
             "NewsData": _stats_newsdata,
             "GNews": _stats_gnews,
             "TheNewsAPI": _stats_thenewsapi,
+            "AI Discovery": _stats_discovery,
         }
 
         # Add alerts for sources that returned 0 articles
@@ -210,7 +229,7 @@ def run_pipeline():
         all_articles = (
             newsapi_articles + tavily_articles + country_articles + rss_articles
             + gdelt_articles + scraper_articles + newsdata_articles
-            + gnews_articles + thenewsapi_articles
+            + gnews_articles + thenewsapi_articles + discovery_articles
         )
         _stats_total_fetched = len(all_articles)  # Capture before any filtering
         report_data["total_fetched"] = _stats_total_fetched
@@ -220,8 +239,8 @@ def run_pipeline():
             log.warning("No articles fetched. Exiting.")
             return
 
-        # Step 10: Drop articles with no publish date or older than 14 days
-        log.info(f"Step 10/{TOTAL_STEPS} -- Filtering articles with no publish date or older than 14 days...")
+        # Step 11: Drop articles with no publish date or older than 14 days
+        log.info(f"Step 11/{TOTAL_STEPS} -- Filtering articles with no publish date or older than 14 days...")
         date_cutoff = datetime.now(timezone.utc) - timedelta(days=14)
         with_date = []
         no_date_count = 0
@@ -266,8 +285,8 @@ def run_pipeline():
             log.warning("No articles with valid publish dates. Exiting.")
             return
 
-        # Step 11: Title-similarity dedup (catch syndicated articles)
-        log.info(f"Step 11/{TOTAL_STEPS} -- Title-similarity dedup...")
+        # Step 12: Title-similarity dedup (catch syndicated articles)
+        log.info(f"Step 12/{TOTAL_STEPS} -- Title-similarity dedup...")
         seen_titles = {}
         title_deduped = []
         title_dup_count = 0
@@ -289,8 +308,8 @@ def run_pipeline():
         report_data["after_title_dedup"] = len(all_articles)
         log.info(f"  {len(all_articles)} articles after title dedup")
 
-        # Step 12: Save all candidates to staging table (audit trail)
-        log.info(f"Step 12/{TOTAL_STEPS} -- Saving candidates to articles_staging...")
+        # Step 13: Save all candidates to staging table (audit trail)
+        log.info(f"Step 13/{TOTAL_STEPS} -- Saving candidates to articles_staging...")
         try:
             from tools.upload_supabase import upload_staging
             staged = upload_staging(all_articles)
@@ -298,8 +317,8 @@ def run_pipeline():
         except Exception as e:
             log.error(f"  Staging upload failed: {e}")
 
-        # Step 13: Deduplicate (URL dedup + against Supabase)
-        log.info(f"Step 13/{TOTAL_STEPS} -- Deduplicating against Supabase articles table...")
+        # Step 14: Deduplicate (URL dedup + against Supabase)
+        log.info(f"Step 14/{TOTAL_STEPS} -- Deduplicating against Supabase articles table...")
         try:
             from tools.deduplicate import deduplicate
             clean_articles = deduplicate(all_articles)
@@ -314,9 +333,9 @@ def run_pipeline():
             log.info("All articles already in Supabase. Nothing new to process.")
             return
 
-        # Step 14: AI Analysis (with full article scraping)
+        # Step 15: AI Analysis (with full article scraping)
         report_data["ai_processed"] = len(clean_articles)
-        log.info(f"Step 14/{TOTAL_STEPS} -- AI analysis of {len(clean_articles)} articles (MiMo-V2-Pro + full scrape)...")
+        log.info(f"Step 15/{TOTAL_STEPS} -- AI analysis of {len(clean_articles)} articles (MiMo-V2-Pro + full scrape)...")
         try:
             from tools.analyze_articles import analyze_articles
             analyzed = analyze_articles(clean_articles)
@@ -383,8 +402,8 @@ def run_pipeline():
             log.warning("No fresh articles to upload.")
             return
 
-        # Step 15: Curation — country cap + quality ranking
-        log.info(f"Step 15/{TOTAL_STEPS} -- Curating {len(analyzed)} articles (country cap + quality rank)...")
+        # Step 16: Curation — country cap + quality ranking
+        log.info(f"Step 16/{TOTAL_STEPS} -- Curating {len(analyzed)} articles (country cap + quality rank)...")
         try:
             from tools.curate_articles import curate_articles
             analyzed = curate_articles(analyzed)
@@ -398,8 +417,8 @@ def run_pipeline():
             log.warning("No articles after curation. Exiting.")
             return
 
-        # Step 16: Upload articles to final table
-        log.info(f"Step 16/{TOTAL_STEPS} -- Uploading articles to Supabase articles table...")
+        # Step 17: Upload articles to final table
+        log.info(f"Step 17/{TOTAL_STEPS} -- Uploading articles to Supabase articles table...")
         _stats_published = len(analyzed)
         report_data["published"] = _stats_published
         report_data["articles"] = analyzed
@@ -410,8 +429,8 @@ def run_pipeline():
         except Exception as e:
             log.error(f"  Article upload failed: {e}")
 
-        # Step 17: Typology summaries
-        log.info(f"Step 17/{TOTAL_STEPS} -- Generating typology summaries (based on curated set)...")
+        # Step 18: Typology summaries
+        log.info(f"Step 18/{TOTAL_STEPS} -- Generating typology summaries (based on curated set)...")
         try:
             from tools.generate_typology_summary import generate_typology_summaries
             from tools.upload_supabase import upload_typology_summaries
@@ -437,6 +456,7 @@ def run_pipeline():
                 newsdata_count=_stats_newsdata,
                 gnews_count=_stats_gnews,
                 thenewsapi_count=_stats_thenewsapi,
+                discovery_count=_stats_discovery,
                 total_fetched=_stats_total_fetched,
                 total_after_dedup=_stats_after_dedup,
                 total_published=_stats_published,
@@ -444,8 +464,8 @@ def run_pipeline():
         except Exception as e:
             log.error(f"  Stats logging failed: {e}")
 
-        # Step 18: Send Telegram daily report
-        log.info(f"Step 18/{TOTAL_STEPS} -- Sending Telegram daily report...")
+        # Step 19: Send Telegram daily report
+        log.info(f"Step 19/{TOTAL_STEPS} -- Sending Telegram daily report...")
         try:
             from tools.send_telegram_report import send_pipeline_report
             send_pipeline_report(report_data)
