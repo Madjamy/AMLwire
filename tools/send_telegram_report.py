@@ -151,11 +151,11 @@ def send_pipeline_report(report_data: dict) -> bool:
 
     # ── Top Articles (score >= 60) ──
     if articles:
-        top = [a for a in articles if (a.get("quality_score") or 0) >= 60]
+        top = [a for a in articles if (a.get("quality_score") or 0) >= 75]
         top.sort(key=lambda a: a.get("quality_score", 0), reverse=True)
         if top:
             lines.append("")
-            lines.append(f"<b>TOP ARTICLES (score >= 60)</b>")
+            lines.append(f"<b>TOP ARTICLES (score >= 75)</b>")
             shown = 0
             for a in top:
                 if shown >= 15:
@@ -165,7 +165,7 @@ def send_pipeline_report(report_data: dict) -> bool:
                 score = a.get("quality_score", 0)
                 country = (a.get("country") or "?")[:15]
                 title = (a.get("amlwire_title") or a.get("title") or "?")[:70]
-                icon = "\U0001f534" if score >= 80 else "\U0001f7e0"  # red / orange circle
+                icon = "\U0001f534" if score >= 90 else "\U0001f7e0"  # red / orange circle
                 lines.append(f"  {icon} {score} [{country}] {title}")
                 shown += 1
 

@@ -55,7 +55,7 @@ DEFAULT_CAP = 2
 MAX_TOTAL = int(os.getenv("CURATION_MAX_TOTAL", "45"))  # raised from 40 to accommodate region floors
 
 # Articles scoring at or above this threshold bypass the country cap
-CAP_OVERRIDE_THRESHOLD = 55
+CAP_OVERRIDE_THRESHOLD = 65
 
 # ─── Region floor guarantees ─────────────────────────────────────────────────
 # Minimum articles per region per run. If below floor after curation,
@@ -157,11 +157,11 @@ SIGNIFICANCE_KEYWORDS_MID = {
 
 def _assign_tier(score: int) -> str:
     """Map quality score to display tier."""
-    if score >= 80:
+    if score >= 90:
         return "Critical"
-    elif score >= 60:
+    elif score >= 75:
         return "High"
-    elif score >= 40:
+    elif score >= 60:
         return "Elevated"
     return "Watch"
 
@@ -193,8 +193,10 @@ def score_article(article: dict) -> int:
     }
     score += pub_scores.get(pub_type, 0)
 
-    # Modus operandi depth
+    # Modus operandi depth — ignore fallback template
     mo_len = len(mo)
+    if mo.startswith("Modus operandi not reported"):
+        mo_len = 0
     if mo_len > 200:
         score += 10
     elif mo_len > 100:

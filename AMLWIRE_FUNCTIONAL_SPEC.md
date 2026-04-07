@@ -474,6 +474,7 @@ Each article is scored using 4 tiers. The `quality_score` is stored in Supabase 
 | Modus operandi > 200 chars | +10 |
 | Modus operandi > 100 chars | +7 |
 | Modus operandi > 50 chars | +3 |
+| MO fallback template ("Modus operandi not reported...") | +0 (excluded from length check) |
 | Financial amount present | +10 |
 
 **Tier 2 — Typology & Predicate Crime (0-30)**:
@@ -511,14 +512,14 @@ Each article is assigned a tier label based on its score, stored as `quality_tie
 
 | Tier | Score | Meaning |
 |------|-------|---------|
-| **Critical** | 80-100 | Major enforcement actions, large fines, OFAC designations |
-| **High** | 60-79 | Significant enforcement, regulatory guidance with named authority |
-| **Elevated** | 40-59 | Specific typology articles with moderate detail |
-| **Watch** | 0-39 | Generic news, thin content, informational |
+| **Critical** | 90-100 | Major enforcement actions with institutional significance (FATF/UN), large fines from major authorities |
+| **High** | 75-89 | Significant enforcement, high-value typologies with detail from major authorities |
+| **Elevated** | 60-74 | Specific typology articles with moderate detail, regulatory guidance |
+| **Watch** | 0-59 | Generic news, thin content, informational |
 
 ### Cap Override
 
-Articles scoring **55+** bypass the country cap (still subject to MAX_TOTAL). This ensures genuinely significant articles (major enforcement actions, large fines, UN/FATF decisions) are never silently dropped.
+Articles scoring **65+** bypass the country cap (still subject to MAX_TOTAL). This ensures genuinely significant articles (major enforcement actions, large fines, UN/FATF decisions) are never silently dropped.
 
 ### Total Cap
 
