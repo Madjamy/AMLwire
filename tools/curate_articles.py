@@ -144,6 +144,15 @@ MAJOR_AUTHORITIES = {
 
 PRIORITY_COUNTRIES = {"Australia", "United Kingdom", "India", "Singapore", "UAE", "Canada"}
 
+# Routine enforcement signals — arrest/sentencing news with limited compliance value
+# When these appear in the title of an enforcement_action article, the base score
+# is reduced from +20 to +5 (criminal justice outcome, not regulatory enforcement)
+ROUTINE_ENFORCEMENT_SIGNALS = {
+    "arrested", "jailed", "sentenced", "convicted", "pleads guilty",
+    "found guilty", "indicted", "prison", "custody", "bail denied",
+    "bail rejected", "denies bail", "rejects bail",
+}
+
 # Keywords for institutional significance scoring (checked in title + summary)
 SIGNIFICANCE_KEYWORDS_HIGH = {
     "fatf", "un security council", "unsc", "united nations",
@@ -191,7 +200,13 @@ def score_article(article: dict) -> int:
         "typology_study": 10,
         "industry_news": 0,
     }
-    score += pub_scores.get(pub_type, 0)
+    pub_score = pub_scores.get(pub_type, 0)
+
+    # Routine arrest/sentencing news — lower compliance value than regulatory enforcement
+    if pub_type == "enforcement_action" and any(s in title for s in ROUTINE_ENFORCEMENT_SIGNALS):
+        pub_score = 5
+
+    score += pub_score
 
     # Modus operandi depth — ignore fallback template
     mo_len = len(mo)

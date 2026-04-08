@@ -467,7 +467,8 @@ Each article is scored using 4 tiers. The `quality_score` is stored in Supabase 
 
 | Signal | Points |
 |--------|--------|
-| publication_type: enforcement_action | +20 |
+| publication_type: enforcement_action (regulatory) | +20 |
+| publication_type: enforcement_action (routine arrest/sentencing) | +5 |
 | publication_type: regulatory_guidance | +15 |
 | publication_type: typology_study | +10 |
 | publication_type: industry_news | +0 |
