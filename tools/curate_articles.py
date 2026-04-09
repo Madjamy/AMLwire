@@ -153,6 +153,15 @@ ROUTINE_ENFORCEMENT_SIGNALS = {
     "bail rejected", "denies bail", "rejects bail",
 }
 
+# Systemic signals — if present alongside arrest keywords, the article has
+# compliance/typology value and should NOT be excluded
+SYSTEMIC_SIGNALS = {
+    "ofac", "fincen", "austrac", "fca", "fatf", "mas", "hkma",
+    "sanctions", "designat", "operation ", "dismantl", "network",
+    "compliance", "fine ", "fined", "penalty", "civil action",
+    "ring ", "syndicate", "cartel", "scheme",
+}
+
 # Keywords for institutional significance scoring (checked in title + summary)
 SIGNIFICANCE_KEYWORDS_HIGH = {
     "fatf", "un security council", "unsc", "united nations",
@@ -162,6 +171,27 @@ SIGNIFICANCE_KEYWORDS_MID = {
     "austrac", "fincen", "fca", "ofac", "mas", "hkma", "sec", "finra",
     "europol", "interpol", "nca", "rbi", "ed india",
 }
+
+
+def _is_individual_criminal_justice(article: dict) -> bool:
+    """
+    Detect individual arrest/sentencing news with no systemic compliance value.
+    These are crime blotter articles about individuals being arrested, convicted,
+    or sentenced — not regulatory enforcement against institutions.
+    Returns True if the article should be excluded from the feed.
+    """
+    pub_type = article.get("publication_type", "")
+    if pub_type != "enforcement_action":
+        return False
+
+    title = (article.get("title") or article.get("amlwire_title") or "").lower()
+    has_routine = any(s in title for s in ROUTINE_ENFORCEMENT_SIGNALS)
+    if not has_routine:
+        return False
+
+    # Check for systemic signals that indicate compliance/typology value
+    has_systemic = any(s in title for s in SYSTEMIC_SIGNALS)
+    return not has_systemic
 
 
 def _assign_tier(score: int) -> str:
@@ -297,6 +327,14 @@ def curate_articles(articles: list[dict]) -> list[dict]:
     # Normalise country names before scoring
     for article in articles:
         article["country"] = _normalise_country(article.get("country"))
+
+    # Exclude individual criminal justice articles (arrests/sentencings with no
+    # systemic compliance value). These are crime blotter noise.
+    before_filter = len(articles)
+    articles = [a for a in articles if not _is_individual_criminal_justice(a)]
+    excluded = before_filter - len(articles)
+    if excluded:
+        print(f"[Curate] Excluded {excluded} individual arrest/sentencing articles (no compliance value)")
 
     # Score and tier every article
     for article in articles:

@@ -518,6 +518,12 @@ Each article is assigned a tier label based on its score, stored as `quality_tie
 | **Elevated** | 60-74 | Specific typology articles with moderate detail, regulatory guidance |
 | **Watch** | 0-59 | Generic news, thin content, informational |
 
+### Individual Criminal Justice Exclusion
+
+Articles classified as `enforcement_action` that describe **individual arrests, sentencings, or convictions** with no systemic compliance value are excluded during curation. Detection: title contains arrest/sentencing signals (arrested, jailed, sentenced, convicted, pleads guilty, indicted, prison, custody, bail denied/rejected) AND does NOT contain systemic signals (OFAC, FinCEN, AUSTRAC, sanctions, dismantle, network, operation, ring, syndicate, compliance, fine, penalty).
+
+Borderline articles (arrest + systemic element like "police dismantle network" or "OFAC designates") pass through.
+
 ### Cap Override
 
 Articles scoring **65+** bypass the country cap (still subject to MAX_TOTAL). This ensures genuinely significant articles (major enforcement actions, large fines, UN/FATF decisions) are never silently dropped.
