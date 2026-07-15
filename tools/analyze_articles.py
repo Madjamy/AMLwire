@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "xiaomi/mimo-v2-pro")
+OPENROUTER_MODEL = "openai/gpt-oss-120b"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # Canonical country names — applied post-AI to fix inconsistencies

@@ -211,7 +211,7 @@ def _analyse_gaps(missed_stories: list[dict], current_date: str) -> list[dict]:
 
     client = OpenAI(base_url=OPENROUTER_BASE_URL, api_key=OPENROUTER_API_KEY)
     # Use the standard model for gap analysis (cheaper, doesn't need live search)
-    analysis_model = os.getenv("OPENROUTER_MODEL", "xiaomi/mimo-v2-pro")
+    analysis_model = "openai/gpt-oss-120b"
 
     stories_text = "\n".join(
         f"- {s.get('headline', '')} ({s.get('region', '')})" for s in missed_stories[:10]
