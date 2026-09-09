@@ -7,6 +7,5 @@ services:
       - .env
     volumes:
       - ./logs:/app/logs
-      - /var/log/amlwire.log:/var/log/amlwire.log
     mem_limit: 512m
     cpus: 0.5

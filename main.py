@@ -343,11 +343,11 @@ def run_pipeline():
             report_data["ai_selected"] = len(analyzed)
         except Exception as e:
             log.error(f"  AI analysis failed: {e}")
-            return
+            raise  # re-raise so the outer handler sends a Telegram failure alert
 
         if not analyzed:
             log.warning("AI returned no structured articles.")
-            return
+            raise RuntimeError("AI returned no structured articles.")  # trigger the failure-alert handler
 
         # Enrich with raw_snippet + country from original fetch
         url_to_raw = {a["url"]: a.get("description", "") for a in clean_articles}

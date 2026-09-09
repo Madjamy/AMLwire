@@ -20,8 +20,21 @@ from dotenv import load_dotenv
 load_dotenv()
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_MODEL = "openai/gpt-oss-120b"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+# Deliberately hardcoded — do NOT switch these to os.getenv().
+#
+# docker-compose passes .env through `env_file`, which sets REAL environment
+# variables at container start. load_dotenv() does not override those, so editing
+# .env has no effect until the container is recreated. Both env values are
+# currently stale and point at dead models (OPENROUTER_MODEL=xiaomi/mimo-v2-pro,
+# OPENROUTER_MODEL_FALLBACK=google/gemini-2.5-flash-lite). Reading them would
+# route every run to a 404. This is why the model was hardcoded originally.
+OPENROUTER_MODEL = "openai/gpt-oss-120b"
+# Used when the primary errors (404 deprecation, 402 credits, provider outage).
+# A fallback was configured in .env all along but no code ever read it, so one
+# dead slug meant total pipeline failure for two days in July.
+OPENROUTER_MODEL_FALLBACK = "deepseek/deepseek-v4-flash"
 
 # Canonical country names — applied post-AI to fix inconsistencies
 COUNTRY_NORMALIZE = {
@@ -55,6 +68,26 @@ SCRAPE_HEADERS = {
     "User-Agent": SCRAPE_USER_AGENTS[0],
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
+
+# Content containers, widest net first. Every match is scored and the largest wins,
+# so adding a selector can only ever improve extraction — order carries no meaning.
+CONTENT_SELECTORS = [
+    "article", "main", ".article-body", ".entry-content", ".post-content",
+    ".story-body", "[itemprop='articleBody']",
+    # Added after a 115-URL audit found these templates returning sidebar teasers:
+    ".et_pb_post_content", ".et-l--post",          # Divi (Fincrime Central)
+    ".post-body", ".article-content", ".content-body", ".td-post-content",
+    ".single-post-content", "#content", ".rich-text",
+    "[class*='articleBody']", ".body-text", ".post__content",
+]
+
+# Upper bound on scraped text handed to the model. 12k truncated ~11% of articles;
+# every candidate model has >=163k context so this is not a context constraint.
+SCRAPE_MAX_CHARS = 24000
+
+# Below this, a scrape is treated as suspicious: the search-API snippet is added
+# ALONGSIDE it (never instead of it) and the event is logged for review.
+SCRAPE_THIN_CHARS = 1500
 
 SYSTEM_PROMPT = """You are a Senior Financial Crime Intelligence Analyst and AML Expert powering AMLWire.com — a specialist intelligence platform for AML compliance professionals, financial crime investigators, and regulators worldwide.
 
@@ -425,24 +458,39 @@ def _scrape_article(url: str) -> str:
                 return ""
 
             soup = BeautifulSoup(resp.text, "html.parser")
-            # Remove scripts, styles, nav, footer, ads
-            for tag in soup(["script", "style", "nav", "footer", "header", "aside",
+            # Remove scripts, styles, nav, footer, ads.
+            # NOTE: <header> is deliberately NOT stripped — on many templates the
+            # article <h1> and standfirst live inside an article-level <header>.
+            # Site chrome headers sit outside the winning container anyway.
+            for tag in soup(["script", "style", "nav", "footer", "aside",
                               "form", "button", "noscript", "iframe", "svg"]):
                 tag.decompose()
 
-            # Try article/main content first
-            body = None
-            for selector in ["article", "main", ".article-body", ".entry-content",
-                             ".post-content", ".story-body", "[itemprop='articleBody']"]:
-                body = soup.select_one(selector)
-                if body:
-                    break
-            if not body:
-                body = soup.body or soup
+            # Pick the LARGEST matching container, not the first.
+            # Pages routinely contain several <article> elements (sidebar teasers,
+            # "related posts"); select_one() returned whichever appeared first in
+            # the DOM, which on Divi/WordPress templates was a ~285-char teaser.
+            best = ""
+            for selector in CONTENT_SELECTORS:
+                for node in soup.select(selector):
+                    candidate = re.sub(
+                        r"\s+", " ", node.get_text(separator=" ", strip=True)
+                    ).strip()
+                    if len(candidate) > len(best):
+                        best = candidate
 
-            text = body.get_text(separator=" ", strip=True)
-            text = re.sub(r"\s+", " ", text).strip()
-            return text[:12000]
+            whole = ""
+            if soup.body:
+                whole = re.sub(
+                    r"\s+", " ", soup.body.get_text(separator=" ", strip=True)
+                ).strip()
+
+            # If no container captured a meaningful share of the page, the template
+            # uses selectors we do not know — fall back to the full body text.
+            if len(best) < 0.15 * len(whole):
+                best = whole
+
+            return best[:SCRAPE_MAX_CHARS]
         except Exception:
             if attempt < SCRAPE_MAX_RETRIES - 1:
                 _time.sleep(2 * (attempt + 1))
@@ -480,13 +528,16 @@ def _build_user_prompt(articles: list[dict], current_date: str, backfill_mode: b
             date_warning = " ⚠️ NOTE: This date was extracted from article text (not from API metadata). Verify it matches the actual publication date."
         lines.append(f"Provided Published Date: {pub_date}{date_warning}")
 
-        # Use scraped full text if available, else fall back to Tavily content/description
-        scraped = a.get("_scraped_text", "")
+        # Body text is ADDITIVE: the snippet supplements a thin scrape, it never
+        # replaces it. Previously `if scraped:` meant a 285-char junk scrape
+        # displaced the snippet entirely; nothing is dropped for being short now.
+        scraped = a.get("_scraped_text", "") or ""
+        fallback = (a.get("content") or a.get("description") or "")[:5000]
         if scraped:
             lines.append(f"Full Article Text (scraped): {scraped}")
-        else:
-            fallback = (a.get("content") or a.get("description") or "")[:5000]
-            lines.append(f"Content: {fallback}")
+        if fallback and len(scraped) < SCRAPE_THIN_CHARS:
+            label = "Content" if not scraped else "Additional source summary"
+            lines.append(f"{label}: {fallback}")
         lines.append("")
     return "\n".join(lines)
 
@@ -580,8 +631,13 @@ def _scrape_batch(articles: list[dict]) -> list[dict]:
             return article
         text = _scrape_article(url)
         article["_scraped_text"] = text
-        if text:
+        if len(text) >= SCRAPE_THIN_CHARS:
             print(f"  [Scrape] {len(text)} chars from {url[:60]}")
+        elif text:
+            # A short scrape used to print as a success. These are the cases that
+            # silently produced headline-only summaries.
+            print(f"  [Scrape] THIN ({len(text)} chars) — supplementing with snippet: {url[:60]}")
+            log_scrape_failure(url, f"Thin scrape: {len(text)} chars")
         else:
             print(f"  [Scrape] Failed/paywall: {url[:60]}")
             log_scrape_failure(url, "Empty response after retries")
@@ -601,13 +657,42 @@ def _scrape_batch(articles: list[dict]) -> list[dict]:
     return articles
 
 
-def _call_ai(client, articles: list[dict], current_date: str, backfill_mode: bool = False) -> list[dict]:
+VALID_PUBLICATION_TYPES = {
+    "enforcement_action", "regulatory_guidance", "typology_study", "industry_news",
+}
+
+
+def _normalise_publication_type(value) -> str:
+    """Snap publication_type to the four allowed values.
+
+    Unlike aml_typology this was never validated, so invalid values (e.g. "news")
+    reached the database and broke downstream filtering.
+    """
+    v = (value or "").strip().lower().replace(" ", "_").replace("-", "_")
+    if v in VALID_PUBLICATION_TYPES:
+        return v
+    alias = {
+        "news": "industry_news",
+        "enforcement": "enforcement_action",
+        "regulatory": "regulatory_guidance",
+        "typology": "typology_study",
+        "guidance": "regulatory_guidance",
+    }.get(v)
+    if alias:
+        return alias
+    print(f"[Analyze] Unknown publication_type '{value}' -> industry_news")
+    return "industry_news"
+
+
+def _call_ai(client, articles: list[dict], current_date: str, backfill_mode: bool = False,
+             model: str | None = None, _is_fallback: bool = False) -> list[dict]:
     """Send one batch of articles to OpenRouter. Returns structured list."""
     raw = ""
+    model = model or OPENROUTER_MODEL
     try:
         user_prompt = _build_user_prompt(articles, current_date, backfill_mode=backfill_mode)
         response = client.chat.completions.create(
-            model=OPENROUTER_MODEL,
+            model=model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
@@ -631,6 +716,9 @@ def _call_ai(client, articles: list[dict], current_date: str, backfill_mode: boo
                 item["aml_typology"] = _normalise_typology(item["aml_typology"])
             if "country" in item:
                 item["country"] = normalise_country(item.get("country"))
+            item["publication_type"] = _normalise_publication_type(
+                item.get("publication_type")
+            )
         return result
 
     except json.JSONDecodeError as e:
@@ -645,9 +733,19 @@ def _call_ai(client, articles: list[dict], current_date: str, backfill_mode: boo
                     item["aml_typology"] = _normalise_typology(item["aml_typology"])
                 if "country" in item:
                     item["country"] = normalise_country(item.get("country"))
+                item["publication_type"] = _normalise_publication_type(
+                    item.get("publication_type")
+                )
         return recovered
     except Exception as e:
-        print(f"[Analyze] OpenRouter API error: {e}")
+        print(f"[Analyze] OpenRouter API error on {model}: {e}")
+        # Self-heal on a dead/unavailable primary model. A 404 on a deprecated
+        # slug previously killed every run until someone noticed; a stale
+        # OPENROUTER_MODEL in .env can no longer take the pipeline down.
+        if not _is_fallback and OPENROUTER_MODEL_FALLBACK and OPENROUTER_MODEL_FALLBACK != model:
+            print(f"[Analyze] Falling back to {OPENROUTER_MODEL_FALLBACK}")
+            return _call_ai(client, articles, current_date, backfill_mode=backfill_mode,
+                            model=OPENROUTER_MODEL_FALLBACK, _is_fallback=True)
         return None  # None = API error (distinct from [] = AI excluded all)
 
 
@@ -731,13 +829,27 @@ def analyze_articles(articles: list[dict], backfill_mode: bool = False) -> list[
                 results_b = _call_ai(client, batch[mid:], current_date, backfill_mode=backfill_mode)
                 results = (results_a or []) + (results_b or [])
 
+        # results is None when every attempt errored. extend(None) raised
+        # TypeError and destroyed the whole run — including batches already
+        # analysed — whenever a batch of <=5 failed twice.
+        if results is None:
+            print(f"[Analyze] Batch {batch_num} produced nothing after retries — "
+                  f"{len(batch)} articles dropped")
+            results = []
+        elif len(results) < len(batch):
+            # Silent shortfall: truncated JSON, or the AI excluded articles.
+            # Either way it was previously invisible.
+            print(f"[Analyze] Batch {batch_num} returned {len(results)} of "
+                  f"{len(batch)} articles ({len(batch) - len(results)} dropped or excluded)")
+
         all_analyzed.extend(results)
 
         # Clean up scraped text from batch dicts (not needed after analysis)
         for a in batch:
             a.pop("_scraped_text", None)
 
-    print(f"[Analyze] {len(all_analyzed)} articles analyzed and structured")
+    print(f"[Analyze] {len(all_analyzed)} articles analyzed and structured "
+          f"(from {len(articles)} submitted)")
     return all_analyzed
 
 

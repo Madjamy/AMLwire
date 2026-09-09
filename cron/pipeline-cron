@@ -1,3 +1,7 @@
 # AMLWire daily pipeline — 16:00 UTC = 02:00 AEST (moved earlier so heavy runs finish before the 21:00 host reboot)
 0 16 * * * root cd /app && /usr/local/bin/python main.py >> /var/log/amlwire.log 2>&1
+# Watchdog — 18:30 UTC, ~2.5h after the pipeline starts and well before the 21:00 reboot.
+# Catches failures main.py cannot report itself (SIGKILL is uncatchable, so an
+# out-of-memory kill leaves no exception and sends no alert).
+30 18 * * * root cd /app && /usr/local/bin/python tools/watchdog.py >> /var/log/amlwire.log 2>&1
 # Required blank line at end of cron file
