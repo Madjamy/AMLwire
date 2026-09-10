@@ -8,15 +8,18 @@ Scoring model (0-100):
   Tier 4 — Strategic Priority (0-10): priority country (AU/UK/IN), action_required flag
 
 Curation rules:
-- Country caps limit articles per country (configurable per country)
-- Articles scoring >= CAP_OVERRIDE_THRESHOLD bypass the country cap
-- Total cap: MAX_TOTAL articles per pipeline run
+- Near-duplicate stories are collapsed first, keeping the strongest version
+- Articles scoring >= PROTECTED_SCORE are ALL published, ignoring country caps
+- Remaining slots are filled by score, respecting country caps
+- Total published = max(BASE_MAX_TOTAL, number of protected articles)
+- Region floors then guarantee minimum coverage per region
 - quality_score is stored on each article dict for Supabase persistence
 
 This runs AFTER AI analysis and BEFORE upload.
 """
 
 import os
+import re
 from collections import defaultdict
 
 # ─── Country normalization (must match analyze_articles.py) ───────────────────
@@ -52,10 +55,27 @@ COUNTRY_CAPS = {
 }
 DEFAULT_CAP = 2
 
-MAX_TOTAL = int(os.getenv("CURATION_MAX_TOTAL", "45"))  # raised from 40 to accommodate region floors
+# Baseline number of articles published per run. The effective total is
+# max(BASE_MAX_TOTAL, number of protected articles) — so a heavy news day expands
+# the feed rather than discarding significant stories.
+BASE_MAX_TOTAL = int(os.getenv("CURATION_MAX_TOTAL", "55"))
 
-# Articles scoring at or above this threshold bypass the country cap
-CAP_OVERRIDE_THRESHOLD = 65
+# Articles scoring at or above this are PROTECTED: every one is published,
+# regardless of country cap or the baseline total. Nothing significant is dropped
+# to make room for lower-tier filler.
+#
+# This threshold previously existed as a country-cap override but never once
+# fired in production ("Cap override: 0" on every logged run). The old loop filled
+# the total to its ceiling before the override list was appended, so overflow
+# articles never had a slot left. Selection below is now ordered so protection
+# applies first.
+# Tunable without a redeploy: yesterday's scraper fix feeds the model full article
+# bodies, which should lift scores (modus operandi depth and a named financial
+# amount are worth 10 points each). If that pushes daily volume higher than the
+# site wants, raise this rather than reintroducing a hard ceiling — it keeps the
+# guarantee that nothing above the bar is dropped.
+PROTECTED_SCORE = int(os.getenv("CURATION_PROTECTED_SCORE", "65"))
+CAP_OVERRIDE_THRESHOLD = PROTECTED_SCORE  # backwards-compatible alias
 
 # ─── Region floor guarantees ─────────────────────────────────────────────────
 # Minimum articles per region per run. If below floor after curation,
@@ -315,6 +335,143 @@ def score_article(article: dict) -> int:
     return min(score, 100)
 
 
+# ─── Near-duplicate collapse ─────────────────────────────────────────────────
+# Step 14 already de-duplicates, but it runs BEFORE AI analysis and can only
+# compare titles and URLs. It also deliberately relaxes its threshold when two
+# articles carry different countries, so a US sanctions action on a Turkish bank
+# reported by a UK outlet arrives three times under three country labels and
+# consumes three slots.
+#
+# By this point the AI has extracted key_entities, typology and financial amount,
+# which identify a story far more reliably than its headline. The three variants
+# below share almost no title words but the same entities:
+#   "Treasury Severs Iranian Regime's Financial Lifelines in Türkiye"  [Turkey]
+#   "US sanctions Turkish bank network Israel wanted closed over ..."  [US]
+#   "US sanctions Turkish bank as Iran financial crackdown widens"     [UK]
+
+# Entities that appear across unrelated stories and so carry no identifying
+# power. Matching on these alone would merge every OFAC action into one.
+#
+# Jurisdictions matter as much as regulators here: key_entities routinely lists
+# countries, and two unrelated Iran-sanctions stories share "Iran" and "FinCEN"
+# without being the same event. Testing on real data, leaving countries in merged
+# a Russia-Iran network story and a Swiss bank story into an Egyptian bank story.
+_GENERIC_AUTHORITIES = {
+    "doj", "department of justice", "us treasury", "u s treasury", "treasury",
+    "ofac", "fincen", "fca", "austrac", "mas", "hkma", "europol", "interpol",
+    "fatf", "fbi", "sec", "irs", "nca", "rbi", "ed", "ed india", "fintrac",
+    "occ", "federal reserve", "finra", "finma", "bafin", "apra", "asic", "sfo",
+    "afp", "efcc", "police", "government", "the government", "unknown", "n a",
+    "central bank", "ministry of finance", "public prosecutor",
+}
+
+_GENERIC_JURISDICTIONS = {
+    "united states", "america", "united kingdom", "britain", "england",
+    "european union", "europe", "uae", "united arab emirates", "dubai",
+    "abu dhabi", "iran", "russia", "china", "north korea", "dprk", "india",
+    "australia", "canada", "singapore", "japan", "hong kong", "switzerland",
+    "germany", "france", "spain", "italy", "netherlands", "belgium", "turkey",
+    "israel", "egypt", "nigeria", "south africa", "kenya", "pakistan",
+    "bangladesh", "ukraine", "poland", "romania", "malaysia", "philippines",
+    "indonesia", "thailand", "vietnam", "cambodia", "myanmar", "mexico",
+    "brazil", "colombia", "venezuela", "saudi arabia", "qatar", "iraq",
+    "lebanon", "syria", "afghanistan", "ireland", "monaco", "cyprus", "malta",
+    "iranian", "russian", "chinese", "american", "british",
+}
+
+_GENERIC_ENTITIES = _GENERIC_AUTHORITIES | _GENERIC_JURISDICTIONS
+
+_TITLE_STOP = {
+    "a", "an", "the", "in", "on", "at", "to", "of", "for", "and", "or", "but",
+    "is", "are", "was", "were", "with", "by", "from", "as", "its", "it", "be",
+    "has", "had", "have", "that", "this", "which", "who", "how", "says", "said",
+    "over", "after", "amid", "into", "about", "up", "us", "new", "more",
+}
+
+
+def _norm_entity(value: str) -> str:
+    """Lowercase, strip punctuation and legal suffixes for entity comparison."""
+    e = re.sub(r"[^a-z0-9\s]", " ", (value or "").lower())
+    e = re.sub(r"\b(inc|ltd|llc|plc|pty|gmbh|sa|nv|bv|co|corp|corporation|limited|company|group|holdings|bank of)\b", " ", e)
+    return re.sub(r"\s+", " ", e).strip()
+
+
+def _distinctive_entities(article: dict) -> set[str]:
+    """Named entities that actually identify this story."""
+    out = set()
+    for raw in (article.get("key_entities") or []):
+        e = _norm_entity(raw)
+        if len(e) >= 4 and e not in _GENERIC_ENTITIES:
+            out.add(e)
+    return out
+
+
+def _title_words(article: dict) -> frozenset[str]:
+    title = article.get("amlwire_title") or article.get("title") or ""
+    words = re.sub(r"[^a-z0-9\s]", " ", title.lower()).split()
+    return frozenset(w for w in words if w not in _TITLE_STOP and len(w) > 2)
+
+
+def _norm_amount(article: dict) -> str:
+    """Digits of the financial amount — currency wording varies between outlets."""
+    return re.sub(r"[^0-9]", "", (article.get("financial_amount") or ""))[:6]
+
+
+def _same_story(a: dict, b: dict) -> bool:
+    """True if two analyzed articles report the same underlying event.
+
+    Biased towards precision: wrongly merging two stories silently deletes one,
+    which is worse than letting a duplicate through.
+    """
+    ea, eb = _distinctive_entities(a), _distinctive_entities(b)
+    ta, tb = _title_words(a), _title_words(b)
+    overlap = len(ta & tb) / len(ta | tb) if (ta | tb) else 0.0
+    same_typology = a.get("aml_typology") == b.get("aml_typology")
+
+    if ea and eb and same_typology:
+        shared = ea & eb
+        # Two distinctive entities in common is strong evidence by itself, and
+        # is what catches the same story told from different national angles.
+        if len(shared) >= 2:
+            return True
+        # One shared entity is weak evidence: a regional police force or a single
+        # bank recurs across unrelated cases. Two Catalan drug cases sharing only
+        # "Mossos d'Esquadra" and a coincidental EUR 70,000 were merged by an
+        # earlier version of this rule. Require the same amount AND a real
+        # headline relationship before collapsing on a single entity.
+        if shared and _norm_amount(a) and _norm_amount(a) == _norm_amount(b) and overlap >= 0.35:
+            return True
+
+    # Headline evidence — deliberately strict. Step 14 already caught the easy
+    # cases at 0.60; this only needs to catch what its country exemption let
+    # through, so a high bar avoids merging genuinely parallel actions.
+    return len(ta | tb) >= 4 and overlap >= 0.75
+
+
+def _collapse_duplicates(articles: list[dict]) -> tuple[list[dict], int]:
+    """Keep the strongest version of each story. Returns (kept, removed_count)."""
+    # Strongest first, so the survivor of each group is the best version.
+    ranked = sorted(
+        articles,
+        key=lambda a: (a.get("quality_score", 0), len(a.get("key_entities") or [])),
+        reverse=True,
+    )
+    kept: list[dict] = []
+    removed = 0
+    for article in ranked:
+        duplicate_of = next((k for k in kept if _same_story(article, k)), None)
+        if duplicate_of is None:
+            kept.append(article)
+            continue
+        removed += 1
+        print(
+            f"  [Curate] Duplicate: [{article.get('country')}] "
+            f"{(article.get('title') or '')[:52]} -> merged into "
+            f"[{duplicate_of.get('country')}] {(duplicate_of.get('title') or '')[:52]}"
+        )
+    return kept, removed
+
+
 def curate_articles(articles: list[dict]) -> list[dict]:
     """
     Score articles, apply country caps with override for high-scoring articles,
@@ -341,36 +498,46 @@ def curate_articles(articles: list[dict]) -> list[dict]:
         article["quality_score"] = score_article(article)
         article["quality_tier"] = _assign_tier(article["quality_score"])
 
+    # Collapse repeats of the same story before any slot is allocated, so one
+    # event reported by three outlets cannot consume three slots.
+    articles, duplicates_removed = _collapse_duplicates(articles)
+    if duplicates_removed:
+        print(f"[Curate] Collapsed {duplicates_removed} duplicate stories into their strongest version")
+
     # Sort by score descending
     sorted_articles = sorted(articles, key=lambda a: a["quality_score"], reverse=True)
 
     country_counts: dict[str, int] = defaultdict(int)
     curated = []
     curated_urls = set()
-    overflow_high_score = []  # High-scoring articles blocked by cap
 
+    # ── Pass 1: protected ──────────────────────────────────────────────────
+    # Every article at or above PROTECTED_SCORE is published, ignoring country
+    # caps. This runs BEFORE any filling, so a significant story can never lose
+    # its place to lower-tier filler — the failure the old ordering guaranteed.
+    protected = [a for a in sorted_articles if a["quality_score"] >= PROTECTED_SCORE]
+    for article in protected:
+        curated.append(article)
+        curated_urls.add(article.get("source_url") or article.get("url", ""))
+        country_counts[article.get("country", "Unknown")] += 1
+
+    # A heavy news day expands the feed rather than discarding protected stories.
+    effective_max = max(BASE_MAX_TOTAL, len(curated))
+
+    # ── Pass 2: fill remaining slots ───────────────────────────────────────
+    # Below the protection bar, country caps still apply so no single
+    # jurisdiction floods the feed with routine coverage.
     for article in sorted_articles:
-        if len(curated) >= MAX_TOTAL:
+        if len(curated) >= effective_max:
             break
-
+        if article["quality_score"] >= PROTECTED_SCORE:
+            continue  # already admitted above
         country = article.get("country", "Unknown")
         cap = COUNTRY_CAPS.get(country, DEFAULT_CAP)
-
         if country_counts[country] < cap:
             curated.append(article)
             curated_urls.add(article.get("source_url") or article.get("url", ""))
             country_counts[country] += 1
-        elif article["quality_score"] >= CAP_OVERRIDE_THRESHOLD:
-            overflow_high_score.append(article)
-
-    # Append high-scoring overflow articles (cap override)
-    for article in overflow_high_score:
-        if len(curated) >= MAX_TOTAL:
-            break
-        curated.append(article)
-        curated_urls.add(article.get("source_url") or article.get("url", ""))
-        country = article.get("country", "Unknown")
-        country_counts[country] += 1
 
     # ── Region floor enforcement ──────────────────────────────────────────────
     # Check if any region is below its minimum floor; if so, pull from sorted_articles
@@ -410,12 +577,23 @@ def curate_articles(articles: list[dict]) -> list[dict]:
     total_dropped = len(articles) - len(curated)
     breakdown = sorted(country_counts.items(), key=lambda x: x[1], reverse=True)
 
-    print(f"[Curate] {len(articles)} → {len(curated)} articles after curation (cap: {MAX_TOTAL})")
+    print(f"[Curate] {len(articles)} → {len(curated)} articles after curation "
+          f"(baseline {BASE_MAX_TOTAL}, effective {effective_max})")
     print(f"[Curate] Country breakdown: {', '.join(f'{c}:{n}' for c, n in breakdown)}")
 
-    if overflow_high_score:
-        override_count = len([a for a in overflow_high_score if a in curated])
-        print(f"[Curate] Cap override: {override_count} high-scoring articles (>={CAP_OVERRIDE_THRESHOLD}) bypassed country cap")
+    # How many protected articles were admitted past a country cap they would
+    # otherwise have failed. This is the number the old code always reported as 0.
+    over_cap = 0
+    seen: dict[str, int] = defaultdict(int)
+    for a in curated:
+        c = a.get("country", "Unknown")
+        seen[c] += 1
+        if seen[c] > COUNTRY_CAPS.get(c, DEFAULT_CAP):
+            over_cap += 1
+    if over_cap:
+        print(f"[Curate] Protected: {over_cap} articles (>={PROTECTED_SCORE}) published past their country cap")
+    if len(curated) > BASE_MAX_TOTAL:
+        print(f"[Curate] Feed expanded to {len(curated)} (baseline {BASE_MAX_TOTAL}) to keep all protected stories")
 
     # Log tier breakdown (all articles + curated)
     tier_counts_all = defaultdict(int)
