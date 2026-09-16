@@ -98,6 +98,37 @@ def _is_within_cutoff(article: dict) -> bool:
     return dt >= cutoff
 
 
+# PostgREST caps an unbounded select at 1,000 rows. The table passed that in
+# July, so this function silently compared against 1,000 of 3,611 articles — and
+# because no order was given it received the OLDEST rows, leaving 100% of recent
+# articles invisible. Recent articles are precisely the ones a daily news fetch
+# re-encounters, so half of each run was re-analysed and re-uploaded: on
+# 15 Sep 2026, 28 of 55 "published" articles were already in the table.
+# Always paginate explicitly, newest first.
+_PAGE_SIZE = 1000
+_MAX_COMPARISON_ROWS = 20000  # safety bound as the archive grows
+
+
+def _fetch_existing_rows(client) -> list[dict]:
+    """Page through stored articles, newest first, instead of taking PostgREST's cap."""
+    rows: list[dict] = []
+    start = 0
+    while start < _MAX_COMPARISON_ROWS:
+        page = (
+            client.table("articles")
+            .select("source_url, title")
+            .order("created_at", desc=True)
+            .range(start, start + _PAGE_SIZE - 1)
+            .execute()
+        )
+        batch = page.data or []
+        rows.extend(batch)
+        if len(batch) < _PAGE_SIZE:
+            break
+        start += _PAGE_SIZE
+    return rows
+
+
 def _get_existing_data() -> tuple[set[str], list[frozenset], list[list[str]]]:
     """Fetch all URLs and normalised titles already stored in Supabase."""
     if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
@@ -105,10 +136,11 @@ def _get_existing_data() -> tuple[set[str], list[frozenset], list[list[str]]]:
         return set(), [], []
     try:
         client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-        response = client.table("articles").select("source_url, title").execute()
-        urls = {row["source_url"] for row in response.data}
-        title_sets = [_normalise_title(row.get("title", "")) for row in response.data]
-        title_words = [_title_word_list(row.get("title", "")) for row in response.data]
+        rows = _fetch_existing_rows(client)
+        print(f"[Dedup] Comparing against {len(rows)} stored articles")
+        urls = {row["source_url"] for row in rows}
+        title_sets = [_normalise_title(row.get("title", "")) for row in rows]
+        title_words = [_title_word_list(row.get("title", "")) for row in rows]
         return urls, title_sets, title_words
     except Exception as e:
         print(f"[Dedup] Could not fetch existing data from Supabase: {e}")

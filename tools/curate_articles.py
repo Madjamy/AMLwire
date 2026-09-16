@@ -55,6 +55,21 @@ COUNTRY_CAPS = {
 }
 DEFAULT_CAP = 2
 
+# Hard ceiling per country, applied even to protected (>=PROTECTED_SCORE) articles.
+# Protection with no ceiling produced 21 US articles in a single run, because every
+# US story cleared the bar. Within a country the highest-scoring ones survive.
+#
+# This does discard some articles scoring >=65, which the unlimited version did
+# not. That is deliberate: one jurisdiction dominating the feed costs more than
+# the marginal story does.
+HARD_COUNTRY_CEILING = {
+    "United States": 8,
+    "United Kingdom": 8,
+    "Australia": 8,
+    "India": 6,
+}
+DEFAULT_HARD_CEILING = 5
+
 # Baseline number of articles published per run. The effective total is
 # max(BASE_MAX_TOTAL, number of protected articles) — so a heavy news day expands
 # the feed rather than discarding significant stories.
@@ -512,14 +527,31 @@ def curate_articles(articles: list[dict]) -> list[dict]:
     curated_urls = set()
 
     # ── Pass 1: protected ──────────────────────────────────────────────────
-    # Every article at or above PROTECTED_SCORE is published, ignoring country
-    # caps. This runs BEFORE any filling, so a significant story can never lose
-    # its place to lower-tier filler — the failure the old ordering guaranteed.
+    # Articles at or above PROTECTED_SCORE are admitted before anything else, so
+    # a significant story can never lose its place to lower-tier filler. They
+    # ignore the soft country cap but still respect a hard per-country ceiling —
+    # without one, a jurisdiction where every story clears the bar takes over the
+    # feed (21 US articles in the 10 Sep run).
     protected = [a for a in sorted_articles if a["quality_score"] >= PROTECTED_SCORE]
+    ceiling_dropped: list[dict] = []
     for article in protected:
+        country = article.get("country", "Unknown")
+        ceiling = HARD_COUNTRY_CEILING.get(country, DEFAULT_HARD_CEILING)
+        if country_counts[country] >= ceiling:
+            # sorted_articles is score-descending, so the ones surviving to here
+            # are always that country's highest-rated.
+            ceiling_dropped.append(article)
+            continue
         curated.append(article)
         curated_urls.add(article.get("source_url") or article.get("url", ""))
-        country_counts[article.get("country", "Unknown")] += 1
+        country_counts[country] += 1
+
+    if ceiling_dropped:
+        by_country: dict[str, int] = defaultdict(int)
+        for a in ceiling_dropped:
+            by_country[a.get("country", "Unknown")] += 1
+        summary = ", ".join(f"{c}:{n}" for c, n in sorted(by_country.items(), key=lambda kv: -kv[1]))
+        print(f"[Curate] Hard ceiling dropped {len(ceiling_dropped)} protected articles ({summary})")
 
     # A heavy news day expands the feed rather than discarding protected stories.
     effective_max = max(BASE_MAX_TOTAL, len(curated))
