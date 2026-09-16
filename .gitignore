@@ -8,3 +8,4 @@ venv/
 .venv/
 credentials.json
 token.json
+backups/

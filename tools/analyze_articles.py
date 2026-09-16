@@ -56,6 +56,36 @@ def normalise_country(country: str | None) -> str | None:
     return COUNTRY_NORMALIZE.get(country.strip(), country.strip())
 
 
+# The prompt allows exactly these five regions, but nothing enforced it: the
+# archive held "Asia‑Pacific" with a non-breaking hyphen (U+2011) — which the
+# site listed as a separate region — plus "Africa" and "Australia".
+CANONICAL_REGIONS = {"Americas", "Europe", "Asia-Pacific", "Middle East & Africa", "Global"}
+_REGION_ALIASES = {
+    "asia pacific": "Asia-Pacific", "apac": "Asia-Pacific", "asia": "Asia-Pacific",
+    "oceania": "Asia-Pacific", "australia": "Asia-Pacific",
+    "africa": "Middle East & Africa", "middle east": "Middle East & Africa",
+    "mena": "Middle East & Africa", "middle east and africa": "Middle East & Africa",
+    "north america": "Americas", "south america": "Americas", "latin america": "Americas",
+    "the americas": "Americas", "worldwide": "Global", "international": "Global",
+}
+
+
+def normalise_region(region: str | None) -> str | None:
+    """Snap region to one of the five values the site filters on."""
+    if not region:
+        return region
+    plain = re.sub(r"[\u2010-\u2015\u2212]", "-", str(region))
+    plain = re.sub(r"\s+", " ", plain).strip()
+    for canonical in CANONICAL_REGIONS:
+        if plain.lower() == canonical.lower():
+            return canonical
+    mapped = _REGION_ALIASES.get(plain.lower().replace("-", " "))
+    if mapped:
+        return mapped
+    print(f"[Analyze] Unrecognised region '{region}' kept as-is")
+    return plain
+
+
 SCRAPE_TIMEOUT = 15  # seconds per article scrape (increased from 10)
 SCRAPE_MAX_RETRIES = 3
 SCRAPE_USER_AGENTS = [
@@ -719,6 +749,8 @@ def _call_ai(client, articles: list[dict], current_date: str, backfill_mode: boo
             item["publication_type"] = _normalise_publication_type(
                 item.get("publication_type")
             )
+            if "region" in item:
+                item["region"] = normalise_region(item.get("region"))
         return result
 
     except json.JSONDecodeError as e:
@@ -736,6 +768,8 @@ def _call_ai(client, articles: list[dict], current_date: str, backfill_mode: boo
                 item["publication_type"] = _normalise_publication_type(
                     item.get("publication_type")
                 )
+                if "region" in item:
+                    item["region"] = normalise_region(item.get("region"))
         return recovered
     except Exception as e:
         print(f"[Analyze] OpenRouter API error on {model}: {e}")

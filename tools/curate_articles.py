@@ -21,6 +21,7 @@ This runs AFTER AI analysis and BEFORE upload.
 import os
 import re
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 
 # ─── Country normalization (must match analyze_articles.py) ───────────────────
 COUNTRY_NORMALIZE = {
@@ -396,6 +397,19 @@ _GENERIC_JURISDICTIONS = {
 
 _GENERIC_ENTITIES = _GENERIC_AUTHORITIES | _GENERIC_JURISDICTIONS
 
+# Authority-shaped names can't be enumerated — every country has its own police
+# forces, courts and departments. Any entity containing one of these words is
+# an actor that recurs across unrelated cases, not an identifier of one case.
+# Without this, "Dubai Police" linked the Daniel Kinahan arrest to an unrelated
+# Scottish crime-clan story, and "Mossos d'Esquadra" linked two Catalan drug cases.
+_AUTHORITY_MARKERS = re.compile(
+    r"\b(police|policia|polizei|garda|gardai|mossos|carabinieri|gendarmerie|"
+    r"prosecutor|prosecution|court|tribunal|judge|ministry|department|"
+    r"office of|authority|commission|agency|bureau|directorate|regulator|"
+    r"central bank|reserve bank|monetary authority|treasury|customs|"
+    r"financial intelligence unit|fiu|task force|interior)\b"
+)
+
 _TITLE_STOP = {
     "a", "an", "the", "in", "on", "at", "to", "of", "for", "and", "or", "but",
     "is", "are", "was", "were", "with", "by", "from", "as", "its", "it", "be",
@@ -415,6 +429,12 @@ def _distinctive_entities(article: dict) -> set[str]:
     """Named entities that actually identify this story."""
     out = set()
     for raw in (article.get("key_entities") or []):
+        # Test for authority words BEFORE suffix-stripping: _norm_entity removes
+        # "bank of", which turned "Central Bank of the UAE" into "central the uae"
+        # and let it slip past the "central bank" marker.
+        plain = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9\s]", " ", str(raw).lower())).strip()
+        if _AUTHORITY_MARKERS.search(plain):
+            continue
         e = _norm_entity(raw)
         if len(e) >= 4 and e not in _GENERIC_ENTITIES:
             out.add(e)
@@ -463,6 +483,41 @@ def _same_story(a: dict, b: dict) -> bool:
     return len(ta | tb) >= 4 and overlap >= 0.75
 
 
+# Two articles are only the same story if they were also published close together.
+# The same people and entities recur across weeks of a case (arrest, charge, bail,
+# trial); without a window those separate developments collapse into one.
+SAME_STORY_WINDOW_DAYS = 4
+
+# Candidates reaching curation are at most 7 days old (main.py's final date gate),
+# so this covers every published article a candidate could duplicate.
+_PUBLISHED_LOOKBACK_DAYS = 14
+
+
+def _article_day(article: dict) -> datetime | None:
+    """Publication date from either the AI's DD-MM-YYYY field or the stored timestamp."""
+    raw = article.get("published_date") or article.get("published_at") or ""
+    value = str(raw).strip()
+    if not value:
+        return None
+    for fmt in ("%d-%m-%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(value[:10], fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _within_window(a: dict, b: dict) -> bool:
+    day_a, day_b = _article_day(a), _article_day(b)
+    if day_a is None or day_b is None:
+        return False  # unknown date: don't risk merging separate developments
+    return abs(day_a - day_b) <= timedelta(days=SAME_STORY_WINDOW_DAYS)
+
+
 def _collapse_duplicates(articles: list[dict]) -> tuple[list[dict], int]:
     """Keep the strongest version of each story. Returns (kept, removed_count)."""
     # Strongest first, so the survivor of each group is the best version.
@@ -474,7 +529,12 @@ def _collapse_duplicates(articles: list[dict]) -> tuple[list[dict], int]:
     kept: list[dict] = []
     removed = 0
     for article in ranked:
-        duplicate_of = next((k for k in kept if _same_story(article, k)), None)
+        # Compared against survivors only, never other duplicates, so matches
+        # cannot chain: A~B and B~C must not pull an unrelated C into A's group.
+        duplicate_of = next(
+            (k for k in kept if _within_window(article, k) and _same_story(article, k)),
+            None,
+        )
         if duplicate_of is None:
             kept.append(article)
             continue
@@ -485,6 +545,65 @@ def _collapse_duplicates(articles: list[dict]) -> tuple[list[dict], int]:
             f"[{duplicate_of.get('country')}] {(duplicate_of.get('title') or '')[:52]}"
         )
     return kept, removed
+
+
+def _load_recently_published() -> list[dict]:
+    """Articles already on the site that a candidate could duplicate."""
+    url, key = os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_KEY")
+    if not url or not key:
+        return []
+    from supabase import create_client
+
+    client = create_client(url, key)
+    since = (datetime.now(timezone.utc) - timedelta(days=_PUBLISHED_LOOKBACK_DAYS)).isoformat()
+    rows: list[dict] = []
+    start = 0
+    while True:  # paged explicitly: PostgREST silently caps unbounded selects at 1,000
+        page = (
+            client.table("articles")
+            .select("title, amlwire_title, key_entities, aml_typology, financial_amount, published_at")
+            .gte("published_at", since)
+            .order("published_at", desc=True)
+            .range(start, start + 999)
+            .execute()
+        )
+        batch = page.data or []
+        rows.extend(batch)
+        if len(batch) < 1000:
+            return rows
+        start += 1000
+
+
+def _drop_already_published(articles: list[dict]) -> tuple[list[dict], int]:
+    """Drop candidates that repeat a story already published on an earlier day.
+
+    Step 14 only rejects a URL it has seen, so the same event from a different
+    outlet the next day was published again. A table-wide scan on 16 Sep 2026
+    found 347 such rows (9.6% of the archive) — e.g. 33 articles on one OFAC
+    action against the Shelbit exchange.
+    """
+    try:
+        existing = _load_recently_published()
+    except Exception as e:  # never let this check break a run
+        print(f"[Curate] Already-published check skipped, could not load recent articles: {e}")
+        return articles, 0
+
+    kept: list[dict] = []
+    dropped = 0
+    for article in articles:
+        match = next(
+            (e for e in existing if _within_window(article, e) and _same_story(article, e)),
+            None,
+        )
+        if match is None:
+            kept.append(article)
+            continue
+        dropped += 1
+        print(
+            f"  [Curate] Already published: {(article.get('title') or '')[:52]} "
+            f"-> {(match.get('amlwire_title') or match.get('title') or '')[:52]}"
+        )
+    return kept, dropped
 
 
 def curate_articles(articles: list[dict]) -> list[dict]:
@@ -518,6 +637,11 @@ def curate_articles(articles: list[dict]) -> list[dict]:
     articles, duplicates_removed = _collapse_duplicates(articles)
     if duplicates_removed:
         print(f"[Curate] Collapsed {duplicates_removed} duplicate stories into their strongest version")
+
+    # ...and drop repeats of stories already published on earlier days.
+    articles, already_published = _drop_already_published(articles)
+    if already_published:
+        print(f"[Curate] Dropped {already_published} stories already published on the site")
 
     # Sort by score descending
     sorted_articles = sorted(articles, key=lambda a: a["quality_score"], reverse=True)
