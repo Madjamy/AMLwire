@@ -367,11 +367,18 @@ def run_pipeline():
             date_str = article.get("published_date", "")
             summary = (article.get("summary") or "") + " " + (article.get("modus_operandi") or "")
 
-            # Content-date cross-check: detect stale articles the AI missed
+            # Content-date cross-check: detect stale articles the AI missed.
+            # Enforcement and regulatory news routinely cites the year a case or rule
+            # began ("its 2023 settlement", "violations from 2022"), so for those the
+            # AI's publish date below is the gate. Without this exemption the check
+            # dropped a 14 Oct 2026 report of the Bank of America penalty, and most
+            # of its 40 most recent rejections were current news; evergreen guides
+            # are the real target.
             year_mentions = _re.findall(r'\b(20[0-9]{2})\b', summary)
             stale_years = [int(y) for y in year_mentions if int(y) < current_year - 1]
             recent_years = [int(y) for y in year_mentions if int(y) >= current_year - 1]
-            if stale_years and not recent_years:
+            is_news = article.get("publication_type") in ("enforcement_action", "regulatory_guidance")
+            if stale_years and not recent_years and not is_news:
                 oldest = min(stale_years)
                 log.info(f"  Skipping stale (content references {oldest}): {article.get('title', '')[:60]}")
                 continue
@@ -380,7 +387,9 @@ def run_pipeline():
                 try:
                     for fmt in ("%d-%m-%Y", "%Y-%m-%d"):
                         try:
-                            parsed = datetime.strptime(date_str, fmt).replace(tzinfo=timezone.utc)
+                            # [:10] so a full timestamp ("2023-10-13T00:00:00Z") is
+                            # dated rather than waved through as unparseable.
+                            parsed = datetime.strptime(date_str[:10], fmt).replace(tzinfo=timezone.utc)
                             if parsed < cutoff:
                                 log.info(f"  Skipping old ({date_str}): {article.get('title', '')[:60]}")
                             else:

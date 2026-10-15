@@ -241,6 +241,91 @@ def _assign_tier(score: int) -> str:
     return "Watch"
 
 
+# Rough USD value of one unit, only precise enough to place an amount in a size
+# band. Unknown currencies are ignored rather than guessed, so they get no bonus.
+_USD_PER_UNIT = {
+    "usd": 1.0, "us$": 1.0, "$": 1.0, "dollars": 1.0,
+    "cad": 0.72, "c$": 0.72, "aud": 0.65, "a$": 0.65, "sgd": 0.77, "s$": 0.77,
+    "hkd": 0.128, "hk$": 0.128, "nzd": 0.59, "nz$": 0.59, "brl": 0.18, "r$": 0.18,
+    "eur": 1.08, "€": 1.08, "euros": 1.08, "euro": 1.08,
+    "gbp": 1.27, "£": 1.27, "pounds": 1.27,
+    "inr": 0.012, "₹": 0.012, "rs": 0.012, "rs.": 0.012, "rupees": 0.012,
+    "ngn": 0.00065, "₦": 0.00065, "n": 0.00065, "naira": 0.00065,
+    "zar": 0.055, "r": 0.055, "rand": 0.055,
+    "chf": 1.13, "jpy": 0.0067, "¥": 0.0067, "yen": 0.0067,
+    "cny": 0.14, "rmb": 0.14, "yuan": 0.14,
+    "aed": 0.27, "dirhams": 0.27, "myr": 0.22, "rm": 0.22, "ringgit": 0.22,
+    "php": 0.017, "kes": 0.0077, "ksh": 0.0077, "pkr": 0.0036,
+    "bdt": 0.0082, "tk": 0.0082, "taka": 0.0082, "idr": 0.000062,
+    "krw": 0.00072, "₩": 0.00072, "won": 0.00072, "thb": 0.029, "baht": 0.029,
+}
+
+_MULTIPLIERS = {
+    "trillion": 1e12, "tn": 1e12, "billion": 1e9, "bn": 1e9, "b": 1e9,
+    "million": 1e6, "mn": 1e6, "mln": 1e6, "m": 1e6, "crore": 1e7, "cr": 1e7,
+    "lakh": 1e5, "thousand": 1e3, "k": 1e3,
+}
+
+# Symbols and codes written before the number ("USD 1.2 billion", "₹25 crore",
+# "N2 billion"). Longer prefixes first so "hk$" wins over "$". Single-letter codes
+# (N for naira, R for rand) must touch the digits and not end a word, and a symbol
+# glued to letters ("MX$1 billion") is an unknown currency, not US dollars.
+_PREFIX_CUR = (
+    r"(?:(?<![a-z])(us\$|hk\$|nz\$|c\$|a\$|s\$|r\$|usd|cad|aud|sgd|hkd|nzd|brl|eur|gbp|inr|"
+    r"rs\.?|ngn|zar|chf|jpy|cny|rmb|aed|myr|rm|php|kes|ksh|pkr|bdt|tk|idr|krw|thb|"
+    r"n(?=\d)|r(?=\d))|(?<![a-z])([$€£₹₦¥₩]))"
+)
+_NUMBER = r"\s*(\d[\d,]*(?:\.\d+)?)\s*(trillion|tn|billion|bn|million|mln|mn|crore|cr|lakh|thousand|b|m|k)?\b"
+_PREFIX_AMOUNT = re.compile(_PREFIX_CUR + _NUMBER)
+# Currency written after the number ("5 billion naira", "1.21bn USD").
+_SUFFIX_AMOUNT = re.compile(
+    r"(\d[\d,]*(?:\.\d+)?)\s*(trillion|tn|billion|bn|million|mln|mn|crore|lakh|thousand)?\s*"
+    r"(dollars|euros?|pounds|rupees|naira|rand|yuan|yen|dirhams|ringgit|taka|won|baht|usd|eur|gbp|inr)\b"
+)
+
+
+_PENALTY_WORDS = re.compile(r"\b(fine[ds]?|penalt(y|ies)|settle(s|d|ments?)?|forfeit\w*|civil money)\b")
+
+
+def _penalty_usd(fin_amount: str, title: str) -> float:
+    """USD size of the penalty in an enforcement article, 0 if it isn't one.
+
+    financial_amount can list several figures ("USD 2 billion laundered; USD 5
+    million fine"); when it names the penalty, only that part is sized.
+    """
+    text = (fin_amount or "").lower()
+    parts = [p for p in re.split(r";|,\s|\band\b", text) if _PENALTY_WORDS.search(p)]
+    if parts:
+        return max(_amount_usd(p) for p in parts)
+    return _amount_usd(text) if _PENALTY_WORDS.search(title) else 0.0
+
+
+def _amount_usd(text: str) -> float:
+    """Largest amount in a financial_amount string, in approximate USD (0 if none)."""
+    t = (text or "").lower().replace("\u202f", " ").replace("\xa0", " ")
+    best = 0.0
+    for m in _PREFIX_AMOUNT.finditer(t):
+        cur = m.group(1) or m.group(2)
+        if m.group(2):
+            # "HKD $1.2 billion": the code before a bare symbol says which dollar.
+            before = t[:m.start()].split()[-1:]
+            if before and before[0] in _USD_PER_UNIT and len(before[0]) == 3:
+                cur = before[0]
+        num, mult = m.group(3), m.group(4)
+        try:
+            value = float(num.replace(",", ""))
+        except ValueError:
+            continue
+        best = max(best, value * _MULTIPLIERS.get(mult or "", 1) * _USD_PER_UNIT.get(cur, 0))
+    for m in _SUFFIX_AMOUNT.finditer(t):
+        try:
+            value = float(m.group(1).replace(",", ""))
+        except ValueError:
+            continue
+        best = max(best, value * _MULTIPLIERS.get(m.group(2) or "", 1) * _USD_PER_UNIT.get(m.group(3), 0))
+    return best
+
+
 def score_article(article: dict) -> int:
     """
     Compute quality score (0-100) from AI-analyzed article fields.
@@ -288,6 +373,21 @@ def score_article(article: dict) -> int:
     # Financial amount present
     if fin_amount.strip():
         score += 10
+
+    # Size of the penalty. The flat +10 above scored the record USD 1.2bn Bank of
+    # America penalty (13 Oct 2026) like a USD 20,000 fine; it landed at 72
+    # "Elevated", below the High/Critical tiers the ticker, hero and alerts read.
+    # Penalties only: most other amounts are volumes ("network moved USD 17bn",
+    # "Rs 15,000 crore case") that already score High on typology and would
+    # flood Critical if sized the same way (122 promotions in a 6-week replay).
+    if pub_score == 20:
+        usd = _penalty_usd(fin_amount, title)
+        if usd >= 1e9:
+            score += 20
+        elif usd >= 250e6:
+            score += 12
+        elif usd >= 50e6:
+            score += 6
 
     # ── Tier 2: Typology & Predicate Crime (0-30) ──────────────────────────
     # Determine if this LOW_VALUE typology is actually significant
@@ -421,8 +521,14 @@ _TITLE_STOP = {
 def _norm_entity(value: str) -> str:
     """Lowercase, strip punctuation and legal suffixes for entity comparison."""
     e = re.sub(r"[^a-z0-9\s]", " ", (value or "").lower())
-    e = re.sub(r"\b(inc|ltd|llc|plc|pty|gmbh|sa|nv|bv|co|corp|corporation|limited|company|group|holdings|bank of)\b", " ", e)
-    return re.sub(r"\s+", " ", e).strip()
+    e = re.sub(r"\b(inc|ltd|llc|plc|pty|gmbh|sa|nv|bv|co|corp|corporation|limited|company|group|holdings)\b", " ", e)
+    e = re.sub(r"\s+", " ", e).strip()
+    # "Bank of X" and "X" usually name the same bank, except when X is a place:
+    # stripping turned "Bank of America" into "america", a generic jurisdiction,
+    # so the 13 Oct 2026 USD 1.2bn BofA penalty never matched itself across
+    # outlets and four copies were published.
+    short = re.sub(r"\s+", " ", re.sub(r"\bbank of\b", " ", e)).strip()
+    return e if short in _GENERIC_ENTITIES else short
 
 
 def _distinctive_entities(article: dict) -> set[str]:
