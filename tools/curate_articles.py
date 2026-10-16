@@ -8,7 +8,8 @@ Scoring model (0-100):
   Tier 4 — Strategic Priority (0-10): priority country (AU/UK/IN), action_required flag
 
 Curation rules:
-- Near-duplicate stories are collapsed first, keeping the strongest version
+- Each story is published once: copies from other outlets are folded into the
+  best version as other_sources, including copies of stories already on the site
 - Articles scoring >= PROTECTED_SCORE are ALL published, ignoring country caps
 - Remaining slots are filled by score, respecting country caps
 - Total published = max(BASE_MAX_TOTAL, number of protected articles)
@@ -22,6 +23,7 @@ import os
 import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 # ─── Country normalization (must match analyze_articles.py) ───────────────────
 COUNTRY_NORMALIZE = {
@@ -558,35 +560,92 @@ def _norm_amount(article: dict) -> str:
     return re.sub(r"[^0-9]", "", (article.get("financial_amount") or ""))[:6]
 
 
-def _same_story(a: dict, b: dict) -> bool:
-    """True if two analyzed articles report the same underlying event.
+def _amounts_match(a: dict, b: dict) -> bool:
+    """Same reported figure, allowing for outlets rounding it differently.
 
-    Biased towards precision: wrongly merging two stories silently deletes one,
-    which is worse than letting a duplicate through.
+    Comparing digits alone kept "USD 1.2 billion" and "$1.21 billion" apart, so
+    13 copies of the 13 Oct 2026 Bank of America penalty were published as
+    separate stories.
     """
-    ea, eb = _distinctive_entities(a), _distinctive_entities(b)
+    ua = _amount_usd(a.get("financial_amount") or "")
+    ub = _amount_usd(b.get("financial_amount") or "")
+    if ua and ub:
+        return abs(ua - ub) <= 0.05 * max(ua, ub)
+    na = _norm_amount(a)
+    return bool(na) and na == _norm_amount(b)
+
+
+# Link strengths between two articles, decided by _story_link.
+SAME, CANDIDATE, NONE = "same", "candidate", "none"
+
+
+def _story_link(a: dict, b: dict) -> str:
+    """How strongly the evidence says two articles report the same event.
+
+    SAME needs no further check. CANDIDATE means they share a distinctive entity
+    plus a corroborating signal, but could still be a follow-up rather than a
+    repeat: an arrest, charge and sentence in one case quote the same people and
+    often the same amount. Those go to story_check, which can tell the two apart.
+    """
     ta, tb = _title_words(a), _title_words(b)
     overlap = len(ta & tb) / len(ta | tb) if (ta | tb) else 0.0
-    same_typology = a.get("aml_typology") == b.get("aml_typology")
+    if len(ta | tb) >= 4:
+        # Near-identical headlines: the same report, syndicated or lightly rewritten.
+        if overlap >= 0.9:
+            return SAME
+        # Close but not identical can be the next step: "X charged in $20m
+        # scheme" and "X convicted in $20m scheme" overlap 0.75.
+        if overlap >= 0.75:
+            return CANDIDATE
+    shared = _distinctive_entities(a) & _distinctive_entities(b)
+    if shared and (len(shared) >= 2 or _amounts_match(a, b) or overlap >= 0.35):
+        return CANDIDATE
+    return NONE
 
-    if ea and eb and same_typology:
-        shared = ea & eb
-        # Two distinctive entities in common is strong evidence by itself, and
-        # is what catches the same story told from different national angles.
-        if len(shared) >= 2:
-            return True
-        # One shared entity is weak evidence: a regional police force or a single
-        # bank recurs across unrelated cases. Two Catalan drug cases sharing only
-        # "Mossos d'Esquadra" and a coincidental EUR 70,000 were merged by an
-        # earlier version of this rule. Require the same amount AND a real
-        # headline relationship before collapsing on a single entity.
-        if shared and _norm_amount(a) and _norm_amount(a) == _norm_amount(b) and overlap >= 0.35:
-            return True
 
-    # Headline evidence — deliberately strict. Step 14 already caught the easy
-    # cases at 0.60; this only needs to catch what its country exemption let
-    # through, so a high bar avoids merging genuinely parallel actions.
-    return len(ta | tb) >= 4 and overlap >= 0.75
+def _fallback_same(a: dict, b: dict) -> bool:
+    """Decide a CANDIDATE pair without the model (story_check unavailable).
+
+    Biased towards precision, as before story_check existed: merging two stories
+    hides one behind a source link, which is worse than letting a repeat through.
+    """
+    ta, tb = _title_words(a), _title_words(b)
+    overlap = len(ta & tb) / len(ta | tb) if (ta | tb) else 0.0
+    if len(ta | tb) >= 4 and overlap >= 0.75:
+        return True  # the headline rule that predates story_check
+    shared = _distinctive_entities(a) & _distinctive_entities(b)
+    if len(shared) >= 2 and a.get("aml_typology") == b.get("aml_typology"):
+        return True
+    if _amounts_match(a, b):
+        if overlap >= 0.35:
+            return True
+        # A matching figure of real size with unrelated headlines is the same
+        # event only when reported close together; days later it may be the
+        # case's next step. Small amounts coincide (two Catalan drug cases once
+        # shared EUR 70,000), so those always need the headline link above.
+        day_a, day_b = _article_day(a), _article_day(b)
+        return (
+            _amount_usd(a.get("financial_amount") or "") >= 1e6
+            and day_a is not None and day_b is not None
+            and abs(day_a - day_b) <= timedelta(days=2)
+        )
+    return False
+
+
+def _resolve(pairs: list[tuple[dict, dict]]) -> list[bool]:
+    """True for each CANDIDATE pair that reports the same event."""
+    if not pairs:
+        return []
+    from tools.story_check import judge_pairs  # deferred: imports the OpenAI client
+
+    verdicts = judge_pairs(pairs)
+    if verdicts is None:
+        print(f"[Curate] story_check unavailable — deciding {len(pairs)} candidate pairs by rule")
+        return [_fallback_same(a, b) for a, b in pairs]
+    return [
+        v == "same" if v else _fallback_same(a, b)
+        for (a, b), v in zip(pairs, verdicts)
+    ]
 
 
 # Two articles are only the same story if they were also published close together.
@@ -594,15 +653,14 @@ def _same_story(a: dict, b: dict) -> bool:
 # trial); without a window those separate developments collapse into one.
 SAME_STORY_WINDOW_DAYS = 4
 
-# Candidates reaching curation are at most 7 days old (main.py's final date gate),
-# so this covers every published article a candidate could duplicate.
-_PUBLISHED_LOOKBACK_DAYS = 14
+# Rows are fetched by first publication, but the window runs from a story's
+# latest source, and big stories keep getting coverage for weeks: a story first
+# published 30 days ago can still be within the window of today's candidates.
+_PUBLISHED_LOOKBACK_DAYS = 30
 
 
-def _article_day(article: dict) -> datetime | None:
-    """Publication date from either the AI's DD-MM-YYYY field or the stored timestamp."""
-    raw = article.get("published_date") or article.get("published_at") or ""
-    value = str(raw).strip()
+def _parse_day(value) -> datetime | None:
+    value = str(value or "").strip()
     if not value:
         return None
     for fmt in ("%d-%m-%Y", "%Y-%m-%d"):
@@ -617,58 +675,272 @@ def _article_day(article: dict) -> datetime | None:
         return None
 
 
+def _article_day(article: dict) -> datetime | None:
+    """Publication date from either the AI's DD-MM-YYYY field or the stored timestamp."""
+    return _parse_day(article.get("published_date") or article.get("published_at"))
+
+
+def _last_activity(article: dict) -> datetime | None:
+    """Latest date any source reported this story.
+
+    Coverage of a big story runs for a week or more. Measuring the window from
+    the first report alone let the fifth day's copies through as new stories.
+    """
+    days = [_article_day(article)] + [_parse_day(s.get("published_at")) for s in _other_sources(article)]
+    days = [d for d in days if d]
+    return max(days) if days else None
+
+
 def _within_window(a: dict, b: dict) -> bool:
-    day_a, day_b = _article_day(a), _article_day(b)
+    day_a, day_b = _last_activity(a), _last_activity(b)
     if day_a is None or day_b is None:
         return False  # unknown date: don't risk merging separate developments
     return abs(day_a - day_b) <= timedelta(days=SAME_STORY_WINDOW_DAYS)
 
 
-def _collapse_duplicates(articles: list[dict]) -> tuple[list[dict], int]:
-    """Keep the strongest version of each story. Returns (kept, removed_count)."""
-    # Strongest first, so the survivor of each group is the best version.
+# ─── Sources ─────────────────────────────────────────────────────────────────
+# One story is published once. Every other outlet that reported it is kept as a
+# link on that article (articles.other_sources), official and major outlets first.
+
+_OFFICIAL_SUFFIXES = (
+    ".gov", ".mil", ".gov.uk", ".gov.au", ".gov.sg", ".gov.in", ".nic.in", ".gc.ca",
+    ".gov.hk", ".gov.my", ".gov.ph", ".gov.za", ".gov.ng", ".gov.ae", ".govt.nz",
+    ".europa.eu", ".admin.ch", ".gouv.fr", ".bund.de", ".gob.mx", ".gov.br",
+)
+_OFFICIAL_DOMAINS = {
+    "fca.org.uk", "fatf-gafi.org", "mas.gov.sg", "hkma.gov.hk", "sfc.hk", "bis.org",
+    "interpol.int", "un.org", "egmontgroup.org", "rbi.org.in", "sebi.gov.in",
+    "finra.org", "finma.ch", "bafin.de", "afm.nl", "dnb.nl", "centralbank.ie",
+    "bankofengland.co.uk", "ecb.europa.eu", "imf.org", "worldbank.org",
+    "nationalcrimeagency.gov.uk", "sfo.gov.uk", "austrac.gov.au", "asic.gov.au",
+    "fintrac-canafe.canada.ca", "osc.ca", "cbuae.gov.ae", "sca.gov.ae",
+}
+_MAJOR_OUTLETS = {
+    "reuters.com", "apnews.com", "bloomberg.com", "ft.com", "wsj.com", "nytimes.com",
+    "washingtonpost.com", "economist.com", "bbc.com", "bbc.co.uk", "theguardian.com",
+    "cnbc.com", "cnn.com", "nbcnews.com", "cbsnews.com", "abcnews.go.com", "npr.org",
+    "pbs.org", "axios.com", "politico.com", "politico.eu", "aljazeera.com",
+    "americanbanker.com", "icij.org", "occrp.org", "scmp.com", "straitstimes.com",
+    "afr.com", "abc.net.au", "smh.com.au", "theaustralian.com.au", "economictimes.indiatimes.com",
+    "thehindu.com", "livemint.com", "hindustantimes.com", "indianexpress.com",
+    "nikkei.com", "asia.nikkei.com", "lemonde.fr", "dw.com", "france24.com",
+    "globeandmail.com", "theglobeandmail.com", "cbc.ca", "thenationalnews.com",
+    "amlintelligence.com", "moneylaundering.com", "finextra.com", "fintechfutures.com",
+}
+# A URL whose path ends here is a listing page, not the story itself: FinCEN's
+# entry for the BofA penalty pointed at /news/press-releases.
+_LISTING_SEGMENTS = {
+    "", "news", "press-releases", "news-releases", "press", "media", "newsroom",
+    "latest", "media-releases", "press-room", "news-and-events", "updates", "index",
+}
+
+
+def _domain(url: str) -> str:
+    try:
+        host = urlparse(url or "").netloc.lower()
+    except ValueError:
+        return ""
+    return host[4:] if host.startswith("www.") else host
+
+
+def _is_listing_page(url: str) -> bool:
+    try:
+        path = urlparse(url or "").path
+    except ValueError:
+        return True
+    last = path.rstrip("/").rsplit("/", 1)[-1].lower()
+    return re.sub(r"\.(html?|aspx?|php)$", "", last) in _LISTING_SEGMENTS
+
+
+def _source_rank(url: str) -> int:
+    """3 official, 2 major outlet, 1 other, 0 listing page or no URL."""
+    if not url or _is_listing_page(url):
+        return 0
+    d = _domain(url)
+    if d in _OFFICIAL_DOMAINS or d.endswith(_OFFICIAL_SUFFIXES):
+        return 3
+    if d in _MAJOR_OUTLETS or any(d.endswith("." + m) for m in _MAJOR_OUTLETS):
+        return 2
+    return 1
+
+
+def _source_url(article: dict) -> str:
+    return (article.get("source_url") or article.get("url") or "").strip()
+
+
+_TRACKING_PARAMS = re.compile(r"^(utm_\w+|fbclid|gclid|mc_cid|mc_eid|ref|ref_src|cmpid|ocid|taid|smid|sr_share|guccounter|syn-[0-9a-f]+)$")
+
+
+def _url_key(url: str) -> str:
+    """Compare URLs without scheme, www, tracking parameters or trailing slash.
+
+    Other query parameters stay: on some sites they are the article ("?id=1").
+    """
+    try:
+        p = urlparse((url or "").strip())
+    except ValueError:
+        return (url or "").strip().lower()
+    host = p.netloc.lower()
+    host = host[4:] if host.startswith("www.") else host
+    query = "&".join(sorted(
+        q for q in p.query.split("&") if q and not _TRACKING_PARAMS.match(q.split("=", 1)[0].lower())
+    ))
+    return host + p.path.rstrip("/") + ("?" + query if query else "")
+
+
+def _other_sources(article: dict) -> list[dict]:
+    value = article.get("other_sources") or []
+    return [s for s in value if isinstance(s, dict) and s.get("url")]
+
+
+def _source_entry(article: dict) -> dict:
+    url = _source_url(article)
+    published = _article_day(article)
+    return {
+        "name": (article.get("source_name") or article.get("source") or _domain(url) or "Source").strip(),
+        "url": url,
+        "published_at": published.date().isoformat() if published else None,
+    }
+
+
+MAX_OTHER_SOURCES = 20
+
+
+def _merge_sources(primary: dict, others: list[dict]) -> list[dict]:
+    """primary's other_sources plus every source of `others`, best first, deduplicated."""
+    entries = list(_other_sources(primary))
+    for o in others:
+        entries.append(_source_entry(o))
+        entries.extend(_other_sources(o))
+    seen = {_url_key(_source_url(primary))}
+    merged = []
+    for e in entries:
+        key = _url_key(e["url"])
+        if not e["url"] or key in seen:
+            continue
+        seen.add(key)
+        merged.append(e)
+    # Stable sort: within a rank, the order sources were found is kept.
+    merged.sort(key=lambda e: -_source_rank(e["url"]))
+    kept = merged[:MAX_OTHER_SOURCES]
+    # The newest report dates the story for the same-story window, so it must
+    # survive the cap, or later coverage would read as a new story.
+    dated = [e for e in merged if e.get("published_at")]
+    if dated and len(merged) > MAX_OTHER_SOURCES:
+        newest = max(dated, key=lambda e: e["published_at"])
+        if newest not in kept:
+            kept[-1] = newest
+    return kept
+
+
+def fold_report(kept: dict, dropped: dict) -> None:
+    """Keep a report dropped before AI analysis as a copy of `kept` as one of its sources."""
+    entries = kept.setdefault("other_sources", [])
+    entries.append(_source_entry(dropped))
+    entries.extend(_other_sources(dropped))
+
+
+def _choose_primary(group: list[dict]) -> dict:
+    """The version to publish: the most authoritative of the strongest versions.
+
+    Scores of copies of one event differ mostly by how much each outlet's text
+    gave the model, so any copy within 10 points of the best is eligible, and
+    among those an official release or major outlet beats a syndicator.
+    """
+    best = max(a.get("quality_score", 0) for a in group)
+    eligible = [a for a in group if a.get("quality_score", 0) >= best - 10]
+    return max(
+        eligible,
+        key=lambda a: (_source_rank(_source_url(a)), a.get("quality_score", 0), len(a.get("key_entities") or [])),
+    )
+
+
+def _merge_group(group: list[dict]) -> dict:
+    """Fold a group of copies into its primary, which carries the others as sources."""
+    primary = _choose_primary(group)
+    others = [a for a in group if a is not primary]
+    primary["other_sources"] = _merge_sources(primary, others)
+    # The story is as significant as its best-scored telling.
+    primary["quality_score"] = max(a.get("quality_score", 0) for a in group)
+    primary["quality_tier"] = _assign_tier(primary["quality_score"])
+    return primary
+
+
+def group_stories(articles: list[dict]) -> list[list[dict]]:
+    """Partition articles into stories. Each group lists its anchor first.
+
+    Articles are compared against group anchors only, never other members, so
+    matches cannot chain: A~B and B~C must not pull an unrelated C into A's group.
+    """
     ranked = sorted(
         articles,
         key=lambda a: (a.get("quality_score", 0), len(a.get("key_entities") or [])),
         reverse=True,
     )
-    kept: list[dict] = []
-    removed = 0
-    for article in ranked:
-        # Compared against survivors only, never other duplicates, so matches
-        # cannot chain: A~B and B~C must not pull an unrelated C into A's group.
-        duplicate_of = next(
-            (k for k in kept if _within_window(article, k) and _same_story(article, k)),
+    # Candidate pairs are judged in one batch up front. Each is (later, earlier)
+    # in ranked order, so `earlier` is always a possible anchor for `later`.
+    links: dict[tuple[int, int], str] = {}
+    for i, a in enumerate(ranked):
+        for j in range(i):
+            if _within_window(a, ranked[j]):
+                link = _story_link(a, ranked[j])
+                if link != NONE:
+                    links[(i, j)] = link
+    candidates = [k for k, v in links.items() if v == CANDIDATE]
+    decided = dict(zip(candidates, _resolve([(ranked[i], ranked[j]) for i, j in candidates])))
+
+    groups: list[list[int]] = []
+    for i in range(len(ranked)):
+        home = next(
+            (g for g in groups if links.get((i, g[0])) == SAME or decided.get((i, g[0]))),
             None,
         )
-        if duplicate_of is None:
-            kept.append(article)
-            continue
-        removed += 1
-        print(
-            f"  [Curate] Duplicate: [{article.get('country')}] "
-            f"{(article.get('title') or '')[:52]} -> merged into "
-            f"[{duplicate_of.get('country')}] {(duplicate_of.get('title') or '')[:52]}"
-        )
+        if home is None:
+            groups.append([i])
+        else:
+            home.append(i)
+    return [[ranked[i] for i in g] for g in groups]
+
+
+def _collapse_duplicates(articles: list[dict]) -> tuple[list[dict], int]:
+    """Publish each story once, as its best version. Returns (kept, removed_count)."""
+    kept: list[dict] = []
+    removed = 0
+    for group in group_stories(articles):
+        primary = _merge_group(group) if len(group) > 1 else group[0]
+        kept.append(primary)
+        for a in group:
+            if a is primary:
+                continue
+            removed += 1
+            print(
+                f"  [Curate] Duplicate: [{a.get('country')}] {(a.get('title') or '')[:52]} "
+                f"-> source of [{primary.get('country')}] {(primary.get('title') or '')[:52]}"
+            )
     return kept, removed
 
 
-def _load_recently_published() -> list[dict]:
-    """Articles already on the site that a candidate could duplicate."""
+def _supabase_client():
     url, key = os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_KEY")
     if not url or not key:
-        return []
+        return None
     from supabase import create_client
 
-    client = create_client(url, key)
+    return create_client(url, key)
+
+
+def _load_recently_published(client) -> list[dict]:
+    """Articles already on the site that a candidate could duplicate."""
     since = (datetime.now(timezone.utc) - timedelta(days=_PUBLISHED_LOOKBACK_DAYS)).isoformat()
     rows: list[dict] = []
     start = 0
     while True:  # paged explicitly: PostgREST silently caps unbounded selects at 1,000
         page = (
             client.table("articles")
-            .select("title, amlwire_title, key_entities, aml_typology, financial_amount, published_at")
+            .select("id, title, amlwire_title, key_entities, aml_typology, financial_amount, "
+                    "published_at, source_url, source_name, other_sources, quality_score")
             .gte("published_at", since)
+            .is_("merged_into", "null")  # attach to the published story, never a merged copy
             .order("published_at", desc=True)
             .range(start, start + 999)
             .execute()
@@ -680,36 +952,65 @@ def _load_recently_published() -> list[dict]:
         start += 1000
 
 
-def _drop_already_published(articles: list[dict]) -> tuple[list[dict], int]:
-    """Drop candidates that repeat a story already published on an earlier day.
+def _attach_to_published(articles: list[dict]) -> tuple[list[dict], int]:
+    """Fold candidates that repeat a story already on the site into that article.
 
     Step 14 only rejects a URL it has seen, so the same event from a different
-    outlet the next day was published again. A table-wide scan on 16 Sep 2026
-    found 347 such rows (9.6% of the archive) — e.g. 33 articles on one OFAC
-    action against the Shelbit exchange.
+    outlet the next day was published again (347 such rows on 16 Sep 2026; 13
+    Bank of America penalty articles by 16 Oct). The repeat now becomes a source
+    link on the published article instead of being published or discarded.
+    A genuine development of the story is still published on its own.
     """
     try:
-        existing = _load_recently_published()
+        client = _supabase_client()
+        existing = _load_recently_published(client) if client else []
     except Exception as e:  # never let this check break a run
         print(f"[Curate] Already-published check skipped, could not load recent articles: {e}")
         return articles, 0
 
-    kept: list[dict] = []
-    dropped = 0
-    for article in articles:
-        match = next(
-            (e for e in existing if _within_window(article, e) and _same_story(article, e)),
-            None,
-        )
-        if match is None:
-            kept.append(article)
-            continue
-        dropped += 1
+    # (candidate index, existing index) pairs, strongest evidence first.
+    pairs: list[tuple[int, int, str]] = []
+    for i, a in enumerate(articles):
+        for j, e in enumerate(existing):
+            if _within_window(a, e):
+                link = _story_link(a, e)
+                if link != NONE:
+                    pairs.append((i, j, link))
+    candidates = [(i, j) for i, j, link in pairs if link == CANDIDATE]
+    decided = dict(zip(candidates, _resolve([(articles[i], existing[j]) for i, j in candidates])))
+
+    match_of: dict[int, int] = {}
+    for i, j, link in pairs:
+        if i not in match_of and (link == SAME or decided.get((i, j))):
+            match_of[i] = j
+
+    # Matched reports are never published, even if recording them below fails:
+    # a failed write only loses the link until the report is fetched again
+    # (its URL is not stored, so the next run re-finds and re-attaches it).
+    kept = [a for i, a in enumerate(articles) if i not in match_of]
+    attach: dict[int, list[dict]] = defaultdict(list)
+    for i, j in match_of.items():
+        attach[j].append(articles[i])
         print(
-            f"  [Curate] Already published: {(article.get('title') or '')[:52]} "
-            f"-> {(match.get('amlwire_title') or match.get('title') or '')[:52]}"
+            f"  [Curate] Already published: {(articles[i].get('title') or '')[:52]} "
+            f"-> source of {(existing[j].get('amlwire_title') or existing[j].get('title') or '')[:52]}"
         )
-    return kept, dropped
+
+    attached = 0
+    for j, repeats in attach.items():
+        row = existing[j]
+        update = {"other_sources": _merge_sources(row, repeats)}
+        best = max(a.get("quality_score", 0) for a in repeats)
+        if best > (row.get("quality_score") or 0):
+            # A better telling of the story raises it; nothing ever lowers it.
+            update["quality_score"] = best
+            update["quality_tier"] = _assign_tier(best)
+        try:
+            client.table("articles").update(update).eq("id", row["id"]).execute()
+            attached += len(repeats)
+        except Exception as e:
+            print(f"  [Curate] ERROR could not add {len(repeats)} sources to {row['id']}: {e}")
+    return kept, attached
 
 
 def curate_articles(articles: list[dict]) -> list[dict]:
@@ -737,6 +1038,8 @@ def curate_articles(articles: list[dict]) -> list[dict]:
     for article in articles:
         article["quality_score"] = score_article(article)
         article["quality_tier"] = _assign_tier(article["quality_score"])
+        if article.get("other_sources"):  # carried from the pre-AI title dedup
+            article["other_sources"] = _merge_sources(article, [])
 
     # Collapse repeats of the same story before any slot is allocated, so one
     # event reported by three outlets cannot consume three slots.
@@ -744,10 +1047,10 @@ def curate_articles(articles: list[dict]) -> list[dict]:
     if duplicates_removed:
         print(f"[Curate] Collapsed {duplicates_removed} duplicate stories into their strongest version")
 
-    # ...and drop repeats of stories already published on earlier days.
-    articles, already_published = _drop_already_published(articles)
+    # ...and fold repeats of stories already on the site into those articles.
+    articles, already_published = _attach_to_published(articles)
     if already_published:
-        print(f"[Curate] Dropped {already_published} stories already published on the site")
+        print(f"[Curate] Added {already_published} repeat reports as sources of stories already on the site")
 
     # Sort by score descending
     sorted_articles = sorted(articles, key=lambda a: a["quality_score"], reverse=True)

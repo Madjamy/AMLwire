@@ -287,6 +287,7 @@ def run_pipeline():
 
         # Step 12: Title-similarity dedup (catch syndicated articles)
         log.info(f"Step 12/{TOTAL_STEPS} -- Title-similarity dedup...")
+        from tools.curate_articles import fold_report
         seen_titles = {}
         title_deduped = []
         title_dup_count = 0
@@ -299,6 +300,8 @@ def run_pipeline():
             short_key = norm[:60]
             if short_key in seen_titles:
                 title_dup_count += 1
+                # Not published, but listed as a source of the copy that is.
+                fold_report(seen_titles[short_key], a)
                 continue
             seen_titles[short_key] = a
             title_deduped.append(a)
@@ -352,9 +355,11 @@ def run_pipeline():
         # Enrich with raw_snippet + country from original fetch
         url_to_raw = {a["url"]: a.get("description", "") for a in clean_articles}
         url_to_country = {a["url"]: a.get("country", "") for a in clean_articles}
+        url_to_sources = {a["url"]: a.get("other_sources") or [] for a in clean_articles}
         for article in analyzed:
             src = article.get("source_url") or article.get("url", "")
             article["raw_snippet"] = url_to_raw.get(src, "")
+            article["other_sources"] = url_to_sources.get(src, [])
             if not article.get("country"):
                 article["country"] = url_to_country.get(src) or None
 

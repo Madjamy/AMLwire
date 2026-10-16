@@ -116,7 +116,7 @@ def _fetch_existing_rows(client) -> list[dict]:
     while start < _MAX_COMPARISON_ROWS:
         page = (
             client.table("articles")
-            .select("source_url, title")
+            .select("source_url, title, other_sources")
             .order("created_at", desc=True)
             .range(start, start + _PAGE_SIZE - 1)
             .execute()
@@ -138,7 +138,10 @@ def _get_existing_data() -> tuple[set[str], list[frozenset], list[list[str]]]:
         client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
         rows = _fetch_existing_rows(client)
         print(f"[Dedup] Comparing against {len(rows)} stored articles")
+        # A report already folded into a story as one of its sources has been
+        # analysed once; don't pay to analyse it again every day it reappears.
         urls = {row["source_url"] for row in rows}
+        urls |= {s.get("url") for row in rows for s in (row.get("other_sources") or []) if isinstance(s, dict)}
         title_sets = [_normalise_title(row.get("title", "")) for row in rows]
         title_words = [_title_word_list(row.get("title", "")) for row in rows]
         return urls, title_sets, title_words
@@ -156,12 +159,17 @@ def deduplicate(articles: list[dict]) -> list[dict]:
       2. Near-duplicate title match (Jaccard similarity ≥ 60%, within batch and vs Supabase)
       3. Articles older than 7 days are dropped
     """
+    from tools.curate_articles import fold_report  # deferred: keeps this script runnable alone
+
     existing_urls, existing_title_sets, existing_title_words = _get_existing_data()
 
     seen_urls: set[str] = set()
     seen_title_sets: list[frozenset] = list(existing_title_sets)
     seen_title_words: list[list[str]] = list(existing_title_words)
     seen_countries: list[str] = [""] * len(existing_title_sets)  # No country info for existing
+    # The batch article behind each seen title (None for stored ones), so a
+    # same-headline copy can be kept as one of its sources.
+    seen_owners: list[dict | None] = [None] * len(existing_title_sets)
     clean = []
     skipped_title_dedup = 0
 
@@ -190,18 +198,22 @@ def deduplicate(articles: list[dict]) -> list[dict]:
         norm = _normalise_title(title)
         words = _title_word_list(title)
         if norm:
-            is_dup = any(
-                _titles_are_similar(norm, existing_set, words, existing_words,
-                                    country, existing_country)
-                for existing_set, existing_words, existing_country
-                in zip(seen_title_sets, seen_title_words, seen_countries)
+            dup_of = next(
+                (k for k, (existing_set, existing_words, existing_country)
+                 in enumerate(zip(seen_title_sets, seen_title_words, seen_countries))
+                 if _titles_are_similar(norm, existing_set, words, existing_words,
+                                        country, existing_country)),
+                None,
             )
-            if is_dup:
+            if dup_of is not None:
                 skipped_title_dedup += 1
+                if seen_owners[dup_of] is not None:
+                    fold_report(seen_owners[dup_of], article)
                 continue
             seen_title_sets.append(norm)
             seen_title_words.append(words)
             seen_countries.append(country)
+            seen_owners.append(article)
 
         seen_urls.add(url)
         clean.append(article)

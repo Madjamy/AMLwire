@@ -81,9 +81,16 @@ function identityTokens(entities: unknown): Set<string> {
   const out = new Set<string>();
   if (!Array.isArray(entities)) return out;
   for (const e of entities) {
-    for (const t of String(e).toLowerCase().match(/[a-z0-9]{4,}/g) ?? []) {
+    const name = String(e).toLowerCase();
+    for (const t of name.match(/[a-z0-9]{4,}/g) ?? []) {
       if (!SHARED_WORDS.has(t) && !/^\d+$/.test(t)) out.add(t);
     }
+    // "Bank of America" is made only of shared words, so it produced no token
+    // and five copies of its Oct 2026 penalty all passed as different stories.
+    // Keep only the place, so "Bank of America Merrill Lynch" matches too.
+    const bankOf = name.match(/\bbank of (?:the )?(new [a-z]+|[a-z]+)/);
+    // Central banks are regulators that recur across unrelated stories.
+    if (bankOf && !/\b(central|reserve) bank of/.test(name)) out.add(`bank of ${bankOf[1]}`);
   }
   return out;
 }
@@ -154,8 +161,14 @@ Deno.serve(async (req) => {
     const diverse = params.get("diverse") === "1";
 
     if (id) {
-      const { data, error } = await db.from("articles").select("*").eq("id", id).maybeSingle();
+      let { data, error } = await db.from("articles").select("*").eq("id", id).maybeSingle();
       if (error) throw error;
+      // A copy folded into another article as one of its sources: links to it,
+      // already shared, open the article it was merged into.
+      if (data?.merged_into) {
+        ({ data, error } = await db.from("articles").select("*").eq("id", data.merged_into).maybeSingle());
+        if (error) throw error;
+      }
       if (!data) return json({ error: "Article not found" }, 404);
       return json({ ...data, region: canonicalRegion(data.region) });
     }
@@ -172,6 +185,7 @@ Deno.serve(async (req) => {
           .from("articles")
           .select(columns)
           .not(notNull, "is", null)
+          .is("merged_into", null)
           .order("id")
           .range(start, start + PAGE - 1);
         if (error) throw error;
@@ -211,7 +225,8 @@ Deno.serve(async (req) => {
     // Build a filtered, ordered list query. `windowed` controls whether the
     // recent_days restriction applies, so the same filters can be re-run wider.
     const buildQuery = (windowed: boolean) => {
-      let q = db.from("articles").select("*");
+      // Merged copies live on only as other_sources of the article they joined.
+      let q = db.from("articles").select("*").is("merged_into", null);
 
       if (sort === "quality_score") {
         q = q.order("quality_score", { ascending: false, nullsFirst: false })

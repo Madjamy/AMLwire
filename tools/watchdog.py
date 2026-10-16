@@ -22,7 +22,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 BOT_TOKEN = os.getenv("Telegram_API_KEY")  # same var name send_telegram_report.py uses
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-LOG_PATH = "/var/log/amlwire.log"
+LOG_PATH = "/app/logs/amlwire.log"  # on the ./logs volume, so it survives rebuilds
 
 # A healthy run publishes tens of articles; anything below this is a failure,
 # not a quiet news day.

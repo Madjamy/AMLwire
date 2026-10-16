@@ -96,6 +96,7 @@ def find_related_articles(article_id: str, article: dict, client) -> list[str]:
                 .select("id")
                 .eq("aml_typology", typology)
                 .neq("id", article_id)
+                .is_("merged_into", "null")
                 .order("published_at", desc=True)
                 .limit(5)
                 .execute()
@@ -115,6 +116,7 @@ def find_related_articles(article_id: str, article: dict, client) -> list[str]:
                 .select("id")
                 .eq("enforcement_authority", authority)
                 .neq("id", article_id)
+                .is_("merged_into", "null")
                 .order("published_at", desc=True)
                 .limit(3)
                 .execute()
@@ -172,6 +174,8 @@ def upload_articles(articles: list[dict]) -> int:
             "quality_score": article.get("quality_score", 0),
             "quality_tier": article.get("quality_tier", "Watch"),
             "related_article_ids": [],
+            # Other outlets' reports of this story, folded in by curation.
+            "other_sources": article.get("other_sources") or [],
         }
 
         try:
